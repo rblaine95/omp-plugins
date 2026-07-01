@@ -22,8 +22,21 @@ its latest commit:
 
 ```sh
 omp plugin install github:rblaine95/omp-plugins            # latest on default branch
-omp plugin install 'github:rblaine95/omp-plugins#v1.0.0'   # pin a tag/commit for reproducibility
+omp plugin install 'github:rblaine95/omp-plugins#vX.Y.Z'   # pin a released tag (see Releases)
 ```
+
+## Releases
+
+Versioning is automated with [release-please](https://github.com/googleapis/release-please).
+The **root** `package.json` `version` is the single version of the whole suite — it is the
+value `omp plugin list` shows and `omp-plugins.lock.json` records. Workspace members under
+`extensions/*` are pinned to `0.0.0` and never versioned independently.
+
+Merges to `master` written as [Conventional Commits](https://www.conventionalcommits.org/)
+(`fix:` → patch, `feat:` → minor, `feat!:`/`fix!:` → major) accrue into a release PR. Merging
+that PR bumps the root `version`, updates `CHANGELOG.md`, and tags `vX.Y.Z` with a matching
+GitHub Release — which is what the `#vX.Y.Z` pin above resolves to. Commits without a
+conventional prefix are ignored, so no release PR opens until at least one lands.
 
 ## Uninstall
 
@@ -56,6 +69,6 @@ install pulls in zero runtime dependencies.
 
 ## Adding an extension
 
-1. `mkdir extensions/<name>` with its own `package.json` (`name`, `version`, `omp.extensions: ["./index.ts"]`).
+1. `mkdir extensions/<name>` with its own `package.json` (`name`, `"version": "0.0.0"`, `omp.extensions: ["./index.ts"]`) — members are not versioned independently.
 2. Add the entry to the root `package.json` `omp.extensions` array, which is what a git install reads.
 3. `bun install` to register the new workspace member.
