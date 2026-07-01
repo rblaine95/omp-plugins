@@ -11,6 +11,7 @@ import rulesGuard, {
   bashMatcher,
   buildPolicy,
   candidateAbsPaths,
+  claudeFiles,
   compileGlob,
   decide,
   EMBEDDED_ALLOW,
@@ -562,6 +563,37 @@ describe("loadPolicyEntries (settings file merge)", () => {
       ]);
       expect(deny).toEqual(EMBEDDED_DENY);
       expect(allow).toEqual(EMBEDDED_ALLOW);
+    });
+  });
+});
+
+describe("claudeFiles (default settings file locations)", () => {
+  test("resolves user + org files under home and the project-local file under cwd", () => {
+    expect(claudeFiles("/home/test", "/proj")).toEqual([
+      nodePath.join("/home/test", ".claude", "settings.json"),
+      nodePath.join("/home/test", ".claude", "remote-settings.json"),
+      nodePath.join("/proj", ".claude", "settings.local.json"),
+    ]);
+  });
+  test("project-scoped settings.local.json is loaded and merged via claudeFiles", () => {
+    inTempDir((dir) => {
+      const dotClaude = nodePath.join(dir, ".claude");
+      fs.mkdirSync(dotClaude, { recursive: true });
+      fs.writeFileSync(
+        nodePath.join(dotClaude, "settings.local.json"),
+        JSON.stringify({
+          permissions: {
+            deny: ["Read(/proj/secret)"],
+            allow: ["Write(/proj/tmp/**)"],
+          },
+        }),
+      );
+      // home has no .claude files here, so only the project-local source contributes.
+      const { deny, allow } = loadPolicyEntries(claudeFiles(dir, dir));
+      expect(deny).toContain("Read(/proj/secret)");
+      expect(deny).toContain("Read(**/.env*)"); // defaults still present
+      expect(allow).toContain("Write(/proj/tmp/**)");
+      expect(allow).toEqual(expect.arrayContaining(EMBEDDED_ALLOW));
     });
   });
 });
