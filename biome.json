@@ -11,8 +11,9 @@
       "**",
       "!.claude",
       "!.zed/settings.json",
-      "!**/tsconfig.json",
-      "!**/package.json"
+      "!**/*.md",
+      "!**/package.json",
+      "!**/tsconfig.json"
     ]
   },
   "formatter": {

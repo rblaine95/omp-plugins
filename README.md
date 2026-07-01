@@ -17,7 +17,7 @@ Extensions load on the next omp start. `omp plugin list` shows `omp-plugins` as 
 
 ## Update
 
-Git plugins have no separate update command — re-run install; Bun re-resolves the ref to
+Git plugins have no separate update command. Re-run install and Bun re-resolves the ref to
 its latest commit:
 
 ```sh
@@ -50,12 +50,12 @@ Develop against your live omp without publishing by symlinking the local checkou
 omp plugin link /Users/robbie/Documents/projects/omp-plugins
 ```
 
-`@oh-my-pi/pi-coding-agent` is a **dev-only** dependency (types for `ExtensionAPI`). The
-extensions import it as `import type` only, so it is erased at build time — consumers
-installing via git pull no runtime dependencies.
+`@oh-my-pi/pi-coding-agent` is a dev-only dependency (types for `ExtensionAPI`). The
+extensions import it with `import type` only, so it is erased at build time and a git
+install pulls in zero runtime dependencies.
 
 ## Adding an extension
 
 1. `mkdir extensions/<name>` with its own `package.json` (`name`, `version`, `omp.extensions: ["./index.ts"]`).
-2. Add the entry to the **root** `package.json` `omp.extensions` array — this is what a git install reads.
+2. Add the entry to the root `package.json` `omp.extensions` array, which is what a git install reads.
 3. `bun install` to register the new workspace member.
