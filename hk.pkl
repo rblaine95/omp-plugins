@@ -54,6 +54,14 @@ hooks {
     stash = "git"
   }
 
+  // Enforce Conventional Commits so release-please can compute versions.
+  // Uses hk's native util (no extra tool); {{commit_msg_file}} is the message being committed.
+  ["commit-msg"] {
+    steps {
+      ["check_conventional_commit"] = Builtins.check_conventional_commit
+    }
+  }
+
   // "fix" and "check" are special steps for `hk fix` and `hk check` commands
   ["fix"] {
     fix = true
