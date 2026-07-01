@@ -531,7 +531,7 @@ const SECRET_OUTPUT: RegExp[] = [
   // so match only in context (an aws-secret-ish label followed by `=`/`:`).
   /\baws_?secret_?access_?key[ \t]*[:=][ \t]*["']?[A-Za-z0-9/+]{40}/gi,
   // GitHub token — PAT ghp_, OAuth/CLI gho_, user-to-server ghu_, server ghs_, refresh ghr_.
-  /\bgh[oprsu]_[A-Za-z0-9]{36}\b/g,
+  /\bgh[oprsu]_[A-Za-z0-9]{36,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g, // GitHub PAT (fine-grained)
   /\bglpat-[A-Za-z0-9_-]{20,}/g, // GitLab PAT
   /\b(?:xox[baprs]|xapp)-[A-Za-z0-9-]{10,}/g, // Slack tokens (bot/user/app/...)

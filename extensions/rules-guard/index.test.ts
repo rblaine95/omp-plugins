@@ -479,6 +479,7 @@ describe("redactText — provider token shapes (positive)", () => {
   test("redacts newly-added provider token shapes", () => {
     for (const s of [
       `gho_${"a".repeat(36)}`, // GitHub CLI OAuth token
+      `gho_${"a".repeat(40)}`, // longer body — must match {36,}, not exactly 36
       `glpat-${"a".repeat(20)}`,
       `xapp-${"1234567890abc"}`,
       `AIza${"a".repeat(35)}`,
