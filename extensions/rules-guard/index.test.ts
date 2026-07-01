@@ -435,6 +435,8 @@ describe("decide — adversarial bypass vectors", () => {
       decide("eval", { code: "open('/work/target.conf','w')" }, "/work", pol)
         .block,
     ).toBe(true);
+    // Read-only access to the same write-denied path must remain permitted.
+    expect(readBlocked("/work/target.conf", pol)).toBe(false);
   });
 });
 
