@@ -11,7 +11,10 @@ local linters = new Mapping<String, Step> {
     fix = "bun biome check --write --error-on-warnings --no-errors-on-unmatched {{ files }}"
   }
   // Detect accidentally committed private keys
-  ["detect_private_key"] = Builtins.detect_private_key
+  ["detect_private_key"] = (Builtins.detect_private_key) {
+    // The suite embeds a synthetic PEM fixture to test secret redaction, not a real key.
+    exclude = List("extensions/rules-guard/index.test.ts")
+  }
   // Check Mise files
   ["mise"] = Builtins.mise
   // Ensure all files end with LF (*nix) not CRLF (DOS)
