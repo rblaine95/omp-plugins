@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "rblaine95 personal oh-my-pi extensions, installable via `omp plugin install`.",
+  "license": "MIT",
   "workspaces": [
     "extensions/*"
   ],
