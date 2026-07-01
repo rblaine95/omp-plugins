@@ -8,10 +8,12 @@
  *   denied path, and enforces the denied bash command patterns too. A `tool_result`
  *   pass redacts secret-shaped output as defense in depth.
  *
- * Policy source (read at load from BOTH Claude settings files):
- *   - ~/.claude/settings.json        → permissions.deny + permissions.allow
- *   - ~/.claude/remote-settings.json → permissions.deny + permissions.allow
- *   Both files plus the opinionated defaults below are merged, so the guard still
+ * Policy source (read at load from ALL Claude settings files):
+ *   - ~/.claude/settings.json           → permissions.deny + permissions.allow
+ *   - ~/.claude/remote-settings.json    → permissions.deny + permissions.allow
+ *   - <cwd>/.claude/settings.json       → permissions.deny + permissions.allow
+ *   - <cwd>/.claude/settings.local.json → permissions.deny + permissions.allow
+ *   All files plus the opinionated defaults below are merged, so the guard still
  *   works standalone when a file is missing/invalid.
  *
  * Precedence (unlike Claude, where deny always wins): the MORE SPECIFIC rule
@@ -71,11 +73,25 @@ export const EMBEDDED_ALLOW: string[] = [
   "Read(**/.env.default)",
 ];
 
-// Import `~/.claude/settings.json` and `~/.claude/remote-settings.json` to
-// construct additional rules
-const CLAUDE_FILES = ["settings.json", "remote-settings.json"].map((f) =>
-  nodePath.join(os.homedir(), ".claude", f),
-);
+// Default Claude settings files that contribute policy rules: the user + org
+// files under `~/.claude`, plus the project-scoped `.claude/settings.json`
+// (shared, committed) and `.claude/settings.local.json` (local, git-ignored)
+// under `cwd`. Order is irrelevant to the final policy (precedence is by
+// specificity, not position); a missing file is skipped. Pure + injectable for
+// tests, matching `compileGlob`/`globSpecificity`.
+export function claudeFiles(
+  home: string = os.homedir(),
+  cwd: string = process.cwd(),
+): string[] {
+  return [
+    nodePath.join(home, ".claude", "settings.json"),
+    nodePath.join(home, ".claude", "remote-settings.json"),
+    nodePath.join(cwd, ".claude", "settings.json"),
+    nodePath.join(cwd, ".claude", "settings.local.json"),
+  ];
+}
+
+const CLAUDE_FILES = claudeFiles();
 
 // Claude permission "tool" names mapped onto omp tool classes.
 const CLAUDE_READ_TOOLS: Record<string, true> = {
