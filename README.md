@@ -47,7 +47,7 @@ bun test     # run all member tests
 Develop against your live omp without publishing by symlinking the local checkout:
 
 ```sh
-omp plugin link /Users/robbie/Documents/projects/omp-plugins
+omp plugin link /path/to/omp-plugins
 ```
 
 `@oh-my-pi/pi-coding-agent` is a dev-only dependency (types for `ExtensionAPI`). The
