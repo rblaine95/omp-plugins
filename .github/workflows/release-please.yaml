@@ -5,6 +5,11 @@ on:
     branches:
       - master
 
+# Serialize runs so a merge landing mid-release can't cancel tag/release creation.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions: {}
 
 jobs:
