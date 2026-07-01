@@ -568,19 +568,29 @@ describe("loadPolicyEntries (settings file merge)", () => {
 });
 
 describe("claudeFiles (default settings file locations)", () => {
-  test("resolves user + org files under home and the project-local file under cwd", () => {
+  test("resolves user + org files under home and both project files under cwd", () => {
     expect(claudeFiles("/home/test", "/proj")).toEqual([
       nodePath.join("/home/test", ".claude", "settings.json"),
       nodePath.join("/home/test", ".claude", "remote-settings.json"),
+      nodePath.join("/proj", ".claude", "settings.json"),
       nodePath.join("/proj", ".claude", "settings.local.json"),
     ]);
   });
-  test("project-scoped settings.local.json is loaded and merged via claudeFiles", () => {
+  test("project-scoped settings.json + settings.local.json load and merge via claudeFiles", () => {
     inTempDir((dir) => {
-      const dotClaude = nodePath.join(dir, ".claude");
-      fs.mkdirSync(dotClaude, { recursive: true });
+      const home = nodePath.join(dir, "home");
+      const proj = nodePath.join(dir, "proj");
+      const projClaude = nodePath.join(proj, ".claude");
+      fs.mkdirSync(home, { recursive: true });
+      fs.mkdirSync(projClaude, { recursive: true });
       fs.writeFileSync(
-        nodePath.join(dotClaude, "settings.local.json"),
+        nodePath.join(projClaude, "settings.json"),
+        JSON.stringify({
+          permissions: { deny: ["Read(/proj/shared-secret)"] },
+        }),
+      );
+      fs.writeFileSync(
+        nodePath.join(projClaude, "settings.local.json"),
         JSON.stringify({
           permissions: {
             deny: ["Read(/proj/secret)"],
@@ -588,9 +598,10 @@ describe("claudeFiles (default settings file locations)", () => {
           },
         }),
       );
-      // home has no .claude files here, so only the project-local source contributes.
-      const { deny, allow } = loadPolicyEntries(claudeFiles(dir, dir));
-      expect(deny).toContain("Read(/proj/secret)");
+      // home has no .claude files, so only the project sources contribute.
+      const { deny, allow } = loadPolicyEntries(claudeFiles(home, proj));
+      expect(deny).toContain("Read(/proj/shared-secret)"); // project settings.json
+      expect(deny).toContain("Read(/proj/secret)"); // project settings.local.json
       expect(deny).toContain("Read(**/.env*)"); // defaults still present
       expect(allow).toContain("Write(/proj/tmp/**)");
       expect(allow).toEqual(expect.arrayContaining(EMBEDDED_ALLOW));

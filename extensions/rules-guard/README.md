@@ -20,11 +20,12 @@ and `permissions.allow` arrays, and merges them with the opinionated defaults:
 | --- | --- |
 | `~/.claude/settings.json` | Your personal `permissions.deny` and `permissions.allow`. |
 | `~/.claude/remote-settings.json` | Organization policy. On Team and Enterprise plans this file is managed by org admins, so central rules apply automatically with no local opt-in. |
+| `.claude/settings.json` | Project-shared rules, committed to source control so the whole team inherits them. Resolved under the working directory. |
 | `.claude/settings.local.json` | Project-scoped personal rules, resolved under the working directory. Git-ignored by convention, so it carries machine-local rules that are not shared with the team. |
 | Opinionated defaults (`index.ts`) | An opinionated default deny/allow list baked into the source, so the guard still works standalone when a file is missing or invalid. |
 
-They all merge into one policy — this project-scoped file adds rules, it does not take
-precedence by being local; conflicts resolve by specificity like every other source
+They all merge into one policy — the project-scoped files add rules, they do not take
+precedence by being project-level; conflicts resolve by specificity like every other source
 (see below). A missing or unparseable file is skipped without error, and the guard falls
 back to the remaining files plus the opinionated defaults. Rules compile
 once when the extension loads. The active counts appear in a `session_start` notification,

@@ -11,6 +11,7 @@
  * Policy source (read at load from ALL Claude settings files):
  *   - ~/.claude/settings.json           → permissions.deny + permissions.allow
  *   - ~/.claude/remote-settings.json    → permissions.deny + permissions.allow
+ *   - <cwd>/.claude/settings.json       → permissions.deny + permissions.allow
  *   - <cwd>/.claude/settings.local.json → permissions.deny + permissions.allow
  *   All files plus the opinionated defaults below are merged, so the guard still
  *   works standalone when a file is missing/invalid.
@@ -73,7 +74,8 @@ export const EMBEDDED_ALLOW: string[] = [
 ];
 
 // Default Claude settings files that contribute policy rules: the user + org
-// files under `~/.claude`, plus the project-scoped `.claude/settings.local.json`
+// files under `~/.claude`, plus the project-scoped `.claude/settings.json`
+// (shared, committed) and `.claude/settings.local.json` (local, git-ignored)
 // under `cwd`. Order is irrelevant to the final policy (precedence is by
 // specificity, not position); a missing file is skipped. Pure + injectable for
 // tests, matching `compileGlob`/`globSpecificity`.
@@ -84,6 +86,7 @@ export function claudeFiles(
   return [
     nodePath.join(home, ".claude", "settings.json"),
     nodePath.join(home, ".claude", "remote-settings.json"),
+    nodePath.join(cwd, ".claude", "settings.json"),
     nodePath.join(cwd, ".claude", "settings.local.json"),
   ];
 }
