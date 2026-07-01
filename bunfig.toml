@@ -7,3 +7,4 @@ frozenLockfile = false
 
 [test]
 coverage = true
+coverageThreshold = 1.0

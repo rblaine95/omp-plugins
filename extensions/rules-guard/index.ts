@@ -45,6 +45,7 @@ export const EMBEDDED_DENY: string[] = [
   "Edit(~/.bashrc)",
   "Edit(~/.zshrc)",
   "Read(**/*.id_ed25519)",
+  "Read(**/*.id_rsa)",
   "Read(**/*.key)",
   "Read(**/*.pem)",
   "Read(**/.aws/**)",
