@@ -479,6 +479,7 @@ describe("redactText — provider token shapes (positive)", () => {
   test("redacts newly-added provider token shapes", () => {
     for (const s of [
       `gho_${"a".repeat(36)}`, // GitHub CLI OAuth token
+      `gho_${"a".repeat(40)}`, // longer body — must match {36,}, not exactly 36
       `glpat-${"a".repeat(20)}`,
       `xapp-${"1234567890abc"}`,
       `AIza${"a".repeat(35)}`,
@@ -493,6 +494,8 @@ describe("redactText — provider token shapes (positive)", () => {
       `M${"a".repeat(23)}.${"a".repeat(6)}.${"a".repeat(27)}`,
       `123456789-${"a".repeat(32)}.apps.googleusercontent.com`,
       `eyJ${"a".repeat(10)}.eyJ${"a".repeat(10)}.${"a".repeat(20)}`,
+      `ghs_${"a".repeat(36)}`, // classic server-to-server token
+      `ghs_123456_${"A".repeat(40)}.${"B".repeat(60)}.${"C".repeat(40)}`, // stateless ghs_APPID_JWT
     ])
       expect(redactText(s)).toBe("[REDACTED]");
     // AWS secret access key only redacts in context (label + value).

@@ -530,8 +530,12 @@ const SECRET_OUTPUT: RegExp[] = [
   // AWS secret access key: bare 40-char base64 is indistinguishable from a git SHA,
   // so match only in context (an aws-secret-ish label followed by `=`/`:`).
   /\baws_?secret_?access_?key[ \t]*[:=][ \t]*["']?[A-Za-z0-9/+]{40}/gi,
-  // GitHub token — PAT ghp_, OAuth/CLI gho_, user-to-server ghu_, server ghs_, refresh ghr_.
-  /\bgh[oprsu]_[A-Za-z0-9]{36}\b/g,
+  // GitHub token — PAT ghp_, OAuth/CLI gho_, user-to-server ghu_, refresh ghr_.
+  /\bgh[opru]_[A-Za-z0-9]{36,}/g,
+  // GitHub server-to-server / installation token ghs_ — covers both the classic
+  // 36-char form and the stateless ghs_APPID_JWT form (~520 chars, dot- and
+  // underscore-separated), per GitHub's recommended `ghs_[A-Za-z0-9._-]{36,}`.
+  /\bghs_[A-Za-z0-9._-]{36,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g, // GitHub PAT (fine-grained)
   /\bglpat-[A-Za-z0-9_-]{20,}/g, // GitLab PAT
   /\b(?:xox[baprs]|xapp)-[A-Za-z0-9-]{10,}/g, // Slack tokens (bot/user/app/...)
