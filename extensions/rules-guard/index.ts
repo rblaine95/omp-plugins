@@ -490,11 +490,13 @@ export function decide(
     if (hit) return { block: true, reason: fileMsg(raw, hit.src) };
   }
 
-  // Command / code fields (bash/python/eval/browser/…): denied-command patterns,
-  // then a best-effort path-token scan so a Read(...) deny can't be sidestepped by
-  // a shell read. The token scan is read-class only (its sole purpose), so a
-  // read-allow (e.g. `.env.example`) lets `cat .env.example` through; true secrets
-  // keep a read-deny, so shell writes to them are still caught here.
+  // Command / code fields (bash/python/eval/browser/…): first denied-command
+  // patterns, then a path-token scan. Shell/code can BOTH read and write, and the
+  // scan can't tell which, so it checks read- AND write-class denies
+  // (includeWrite = true) — a Write(...)-only deny (e.g. `Edit(~/.bashrc)`) is thus
+  // enforced against `echo >> ~/.bashrc`. Trade-off: a read-allowed-but-write-denied
+  // path (`.env.example`) is conservatively blocked here, though the read tool
+  // still permits it.
   const shellText = fieldValues(inp, SHELL_FIELDS);
   for (const text of shellText) {
     for (const seg of bashSegments(text)) {
@@ -510,7 +512,7 @@ export function decide(
   }
   for (const text of [...shellText, ...fieldValues(inp, CODE_FIELDS)]) {
     for (const tok of pathTokens(text)) {
-      const hit = blocked(candidateAbsPaths(tok, cwd), false);
+      const hit = blocked(candidateAbsPaths(tok, cwd), true);
       if (hit) return { block: true, reason: fileMsg(tok, hit.src) };
     }
   }

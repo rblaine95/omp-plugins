@@ -123,10 +123,12 @@ describe(".env goal — allow templates, deny the rest", () => {
     // Write(**/.env*) has no write-class allow → writing .env.example blocked.
     expect(writeBlocked("/work/.env.example", pol)).toBe(true);
   });
-  test("shell read of a template is allowed (cat .env.example)", () => {
+  test("shell reference to a write-denied template is conservatively blocked", () => {
+    // The token scan can't tell `cat` from `echo >`, so a Write(**/.env*) deny now
+    // blocks .env.example in shell context; the read tool still permits it (see above).
     expect(
       decide("bash", { command: "cat .env.example" }, "/work", pol).block,
-    ).toBe(false);
+    ).toBe(true);
   });
   test("shell read of a real .env is still blocked", () => {
     expect(
@@ -418,6 +420,22 @@ describe("decide — adversarial bypass vectors", () => {
       false,
     );
   });
+  test("shell/code write to a Write-only-denied path is blocked (finding 1)", () => {
+    const pol = buildPolicy(["Edit(/work/target.conf)"], []);
+    // No matching Read deny — before the fix this bypassed the guard.
+    expect(
+      decide(
+        "bash",
+        { command: "echo evil >> /work/target.conf" },
+        "/work",
+        pol,
+      ).block,
+    ).toBe(true);
+    expect(
+      decide("eval", { code: "open('/work/target.conf','w')" }, "/work", pol)
+        .block,
+    ).toBe(true);
+  });
 });
 
 describe("redactText (defense-in-depth)", () => {
@@ -457,7 +475,7 @@ describe("loadPolicyEntries (settings file merge)", () => {
       const { deny, allow } = loadPolicyEntries([f]);
       expect(deny).toContain("Read(/x/y)");
       expect(deny).toContain("Read(**/.env*)");
-      expect(deny).not.toContain(123 as unknown as string);
+      expect(deny).not.toContain("123");
       expect(allow).toContain("Read(/x/y/z)");
       expect(allow).toEqual(expect.arrayContaining(EMBEDDED_ALLOW));
     });
