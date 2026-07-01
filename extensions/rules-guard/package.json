@@ -1,0 +1,9 @@
+{
+  "name": "rules-guard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Enforce the Claude permissions.deny policy across all omp tools (read/write/edit/find/search/bash/eval/browser).",
+  "omp": {
+    "extensions": ["./index.ts"]
+  }
+}

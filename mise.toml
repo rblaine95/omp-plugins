@@ -1,0 +1,7 @@
+[settings]
+minimum_release_age = "1d"
+npm.package_manager = "bun"
+
+[tools]
+bun = "1"
+node = "24"
