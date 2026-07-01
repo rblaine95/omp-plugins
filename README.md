@@ -28,7 +28,7 @@ omp plugin install 'github:rblaine95/omp-plugins#v1.0.0'   # pin a tag/commit fo
 ## Uninstall
 
 ```sh
-omp plugin uninstall omp-plugins
+omp plugin uninstall @rblaine95/omp-plugins
 ```
 
 ## Included extensions
