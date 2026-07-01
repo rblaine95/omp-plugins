@@ -119,9 +119,9 @@ describe("bash deny is final — allow cannot override", () => {
   });
 });
 
-describe("standalone embedded snapshot (no settings files)", () => {
+describe("standalone opinionated defaults (no settings files)", () => {
   const { deny, allow } = loadPolicyEntries([]);
-  test("embedded allow snapshot is present", () => {
+  test("opinionated default allow-list is present", () => {
     expect(allow).toEqual(EMBEDDED_ALLOW);
     expect(deny).toContain("Read(**/.env*)");
   });

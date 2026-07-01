@@ -14,16 +14,16 @@ which closes that gap.
 ## Policy sources
 
 At startup the extension reads both Claude settings files, pulls their `permissions.deny`
-and `permissions.allow` arrays, and merges them with a built-in snapshot:
+and `permissions.allow` arrays, and merges them with the opinionated defaults:
 
 | Source | What it contributes |
 | --- | --- |
 | `~/.claude/settings.json` | Your personal `permissions.deny` and `permissions.allow`. |
 | `~/.claude/remote-settings.json` | Organization policy. On Team and Enterprise plans this file is managed by org admins, so central rules apply automatically with no local opt-in. |
-| Embedded snapshot (`index.ts`) | A dated union of both deny/allow lists baked into the source, so the guard still works standalone when a file is missing or invalid. |
+| Opinionated defaults (`index.ts`) | An opinionated default deny/allow list baked into the source, so the guard still works standalone when a file is missing or invalid. |
 
 All three merge into one policy. A missing or unparseable file is skipped without error,
-and the guard falls back to the remaining file plus the embedded snapshot. Rules compile
+and the guard falls back to the remaining file plus the opinionated defaults. Rules compile
 once when the extension loads. The active counts appear in a `session_start` notification,
 for example `20 deny / 2 allow rules across all tools`.
 

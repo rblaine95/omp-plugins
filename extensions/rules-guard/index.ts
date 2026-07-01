@@ -11,7 +11,7 @@
  * Policy source (read at load from BOTH Claude settings files):
  *   - ~/.claude/settings.json        → permissions.deny + permissions.allow
  *   - ~/.claude/remote-settings.json → permissions.deny + permissions.allow
- *   Both files plus the embedded snapshots below are merged, so the guard still
+ *   Both files plus the opinionated defaults below are merged, so the guard still
  *   works standalone when a file is missing/invalid.
  *
  * Precedence (unlike Claude, where deny always wins): the MORE SPECIFIC rule
@@ -37,11 +37,11 @@ import os from "node:os";
 import nodePath from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
-// ── Embedded fallback: union of both Claude deny lists (snapshot 2026-06-26) ──
+// ── Opinionated default deny-list ────────────────────────────────────────────
 export const EMBEDDED_DENY: string[] = [
-  "Bash(rm -rf *)",
   "Bash(git push --force *)",
   "Bash(git reset --hard *)",
+  "Bash(rm -rf *)",
   "Edit(~/.bashrc)",
   "Edit(~/.zshrc)",
   "Read(**/*.id_ed25519)",
@@ -61,7 +61,7 @@ export const EMBEDDED_DENY: string[] = [
   "Write(**/.ssh/**)",
 ];
 
-// ── Embedded fallback allow-list (a more-specific allow overrides a deny) ───────
+// ── Opinionated default allow-list (a more-specific allow overrides a deny) ────
 // Only path-bearing `Tool(pattern)` rules belong here; a bare tool allow (e.g.
 // "Read") must NEVER widen a path/bash deny. `.env.example` / `.env.default` are
 // safe templates, so they win over the broad `Read(**/.env*)` deny above.
@@ -313,7 +313,7 @@ export function loadPolicyEntries(files: string[] = CLAUDE_FILES): {
       if (Array.isArray(a))
         for (const x of a) if (typeof x === "string") allow.push(x);
     } catch {
-      // missing or invalid file → rely on embedded snapshots + the other file
+      // missing or invalid file → rely on the opinionated defaults + the other file
     }
   }
   return { deny, allow };
