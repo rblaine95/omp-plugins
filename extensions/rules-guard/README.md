@@ -61,10 +61,22 @@ Denied bash command patterns. `Bash(...)` rules are matched against each command
 of a shell-command field (`command`, `cmd`, `script`), so `rm -rf *` or `git push --force`
 is blocked in `bash` and any other tool that carries such a field.
 
-Secret-shaped output redaction on `tool_result`, as defense in depth. Substrings that look
-like credentials are replaced with `[REDACTED]`: Anthropic (`sk-ant-…`), OpenAI and Stripe
-(`sk-…`, `pk-…`), AWS access-key ids (`AKIA…`), GitHub PATs (`ghp_…`, `github_pat_…`),
-Slack tokens (`xox[baprs]-…`), and PEM private-key blocks.
+Secret-shaped output redaction on `tool_result`, as defense in depth. Substrings that
+look like credentials are replaced with `[REDACTED]`:
+
+- Anthropic (`sk-ant-...`), OpenAI (`sk-...`, `pk-...`)
+- Stripe (`sk_live_...`, `rk_test_...`)
+- AWS access-key ids (`AKIA...`) and, in context, secret access keys
+- GitHub tokens (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_...`, `github_pat_...`), GitLab (`glpat-...`)
+- Slack (`xox[baprs]-...`, `xapp-...`, webhook URLs)
+- Google (`AIza...`, `ya29....`, OAuth client ids)
+- npm (`npm_...`), PyPI (`pypi-...`)
+- SendGrid (`SG....`), DigitalOcean (`dop_v1_...`), Shopify (`shpat_...`), Twilio (`SK...`), Discord bot tokens
+- JWTs and PEM private-key blocks
+- Credentials embedded in connection URLs (`scheme://user:password@host/...`)
+
+Bare high-entropy strings, git SHAs, and UUIDs are deliberately not redacted, to keep
+false positives out of normal tool output.
 
 When a call is blocked the model gets a specific reason instead of a silent failure. The
 reason names the matched rule, for example `Blocked by deny policy: "..." matches

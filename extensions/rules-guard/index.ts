@@ -26,7 +26,7 @@
  *
  * NOT a sandbox: extensions run in-process and bash/eval can read bytes in ways a
  * text scan cannot fully enumerate (a bare `cat server.key` with no path separator,
- * base64, custom interpreters, …). The only hard boundary is OS filesystem
+ * base64, custom interpreters, ...). The only hard boundary is OS filesystem
  * permissions — run omp as a user without read access to these paths, or in a
  * container where they are not mounted. This guard stops the common/accidental
  * paths and hands the model a clear, actionable reason.
@@ -452,7 +452,7 @@ export interface Decision {
 }
 
 /** Pure block/allow decision for one tool call. Detection is field-driven so it
- *  covers every tool (read/write/edit/find/grep/python/eval/browser/…) regardless
+ *  covers every tool (read/write/edit/find/grep/python/eval/browser/...) regardless
  *  of the exact registered name. Exported for tests. */
 export function decide(
   toolName: string,
@@ -490,11 +490,13 @@ export function decide(
     if (hit) return { block: true, reason: fileMsg(raw, hit.src) };
   }
 
-  // Command / code fields (bash/python/eval/browser/…): denied-command patterns,
-  // then a best-effort path-token scan so a Read(...) deny can't be sidestepped by
-  // a shell read. The token scan is read-class only (its sole purpose), so a
-  // read-allow (e.g. `.env.example`) lets `cat .env.example` through; true secrets
-  // keep a read-deny, so shell writes to them are still caught here.
+  // Command / code fields (bash/python/eval/browser/...): first denied-command
+  // patterns, then a path-token scan. Shell/code can BOTH read and write, and the
+  // scan can't tell which, so it checks read- AND write-class denies
+  // (includeWrite = true) — a Write(...)-only deny (e.g. `Edit(~/.bashrc)`) is thus
+  // enforced against `echo >> ~/.bashrc`. Trade-off: a read-allowed-but-write-denied
+  // path (`.env.example`) is conservatively blocked here, though the read tool
+  // still permits it.
   const shellText = fieldValues(inp, SHELL_FIELDS);
   for (const text of shellText) {
     for (const seg of bashSegments(text)) {
@@ -510,7 +512,7 @@ export function decide(
   }
   for (const text of [...shellText, ...fieldValues(inp, CODE_FIELDS)]) {
     for (const tok of pathTokens(text)) {
-      const hit = blocked(candidateAbsPaths(tok, cwd), false);
+      const hit = blocked(candidateAbsPaths(tok, cwd), true);
       if (hit) return { block: true, reason: fileMsg(tok, hit.src) };
     }
   }
@@ -521,13 +523,36 @@ export function decide(
 // ── Output redaction (defense in depth) ───────────────────────────────────────
 
 const SECRET_OUTPUT: RegExp[] = [
-  /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g, // Anthropic
-  /\b(?:sk|pk)-[A-Za-z0-9_-]{16,}\b/g, // OpenAI / Stripe style
+  /\bsk-ant-[A-Za-z0-9_-]{16,}/g, // Anthropic (incl. sk-ant-api...)
+  /\b(?:sk|pk)-[A-Za-z0-9_-]{16,}/g, // OpenAI (incl. sk-proj-...)
+  /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g, // Stripe secret / restricted keys
   /\bAKIA[0-9A-Z]{16}\b/g, // AWS access key id
-  /\bghp_[A-Za-z0-9]{36}\b/g, // GitHub PAT (classic)
-  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, // GitHub PAT (fine-grained)
-  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, // Slack tokens
-  /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----/g,
+  // AWS secret access key: bare 40-char base64 is indistinguishable from a git SHA,
+  // so match only in context (an aws-secret-ish label followed by `=`/`:`).
+  /\baws_?secret_?access_?key[ \t]*[:=][ \t]*["']?[A-Za-z0-9/+]{40}/gi,
+  // GitHub token — PAT ghp_, OAuth/CLI gho_, user-to-server ghu_, server ghs_, refresh ghr_.
+  /\bgh[oprsu]_[A-Za-z0-9]{36}\b/g,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/g, // GitHub PAT (fine-grained)
+  /\bglpat-[A-Za-z0-9_-]{20,}/g, // GitLab PAT
+  /\b(?:xox[baprs]|xapp)-[A-Za-z0-9-]{10,}/g, // Slack tokens (bot/user/app/...)
+  /\bhooks\.slack\.com\/services\/[\w-]+\/[\w-]+\/[\w-]+/g, // Slack incoming webhook
+  /\bAIza[0-9A-Za-z_-]{35}\b/g, // Google API key
+  /\bya29\.[0-9A-Za-z_-]{20,}/g, // Google OAuth access token
+  /\bnpm_[A-Za-z0-9]{36}\b/g, // npm access token
+  /\bpypi-[A-Za-z0-9_-]{16,}/g, // PyPI API token
+  /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g, // SendGrid API key
+  /\beyJ[A-Za-z0-9_-]{6,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g, // JWT (header.payload.signature)
+  /\bdop_v1_[a-f0-9]{64}\b/g, // DigitalOcean PAT
+  /\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b/g, // Shopify access token
+  /\bSK[0-9a-fA-F]{32}\b/g, // Twilio API key SID
+  /\b[MNO][\w-]{23}\.[\w-]{6}\.[\w-]{27,}/g, // Discord bot token
+  /\b[0-9]+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com\b/g, // Google OAuth client id
+  // Credentials embedded in a connection URL (scheme://[user]:password@host/...). The
+  // password is required (`+`), so `https://user@host` and bare URLs are left alone.
+  // Match runs through the path/query (stopping at whitespace/quote/bracket) so a
+  // credentialed DSN's host, port, db name, and query secrets are all redacted.
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]*:[^\s@/]+@[^\s'"`<>)]+/gi,
+  /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----/g, // PEM private key
 ];
 
 /** Redact secret-shaped substrings from tool output text. Exported for tests. */

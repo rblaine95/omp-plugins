@@ -123,10 +123,12 @@ describe(".env goal — allow templates, deny the rest", () => {
     // Write(**/.env*) has no write-class allow → writing .env.example blocked.
     expect(writeBlocked("/work/.env.example", pol)).toBe(true);
   });
-  test("shell read of a template is allowed (cat .env.example)", () => {
+  test("shell reference to a write-denied template is conservatively blocked", () => {
+    // The token scan can't tell `cat` from `echo >`, so a Write(**/.env*) deny now
+    // blocks .env.example in shell context; the read tool still permits it (see above).
     expect(
       decide("bash", { command: "cat .env.example" }, "/work", pol).block,
-    ).toBe(false);
+    ).toBe(true);
   });
   test("shell read of a real .env is still blocked", () => {
     expect(
@@ -391,7 +393,7 @@ describe("decide — adversarial bypass vectors", () => {
     expect(
       decide("read", { path: "/work/pub/../vault/k" }, "/work", pol).block,
     ).toBe(true);
-    // …and traversal OUT of a denied dir must NOT false-positive.
+    // ...and traversal OUT of a denied dir must NOT false-positive.
     expect(
       decide("read", { path: "/work/vault/../pub/k" }, "/work", pol).block,
     ).toBe(false);
@@ -418,6 +420,24 @@ describe("decide — adversarial bypass vectors", () => {
       false,
     );
   });
+  test("shell/code write to a Write-only-denied path is blocked (finding 1)", () => {
+    const pol = buildPolicy(["Edit(/work/target.conf)"], []);
+    // No matching Read deny — before the fix this bypassed the guard.
+    expect(
+      decide(
+        "bash",
+        { command: "echo evil >> /work/target.conf" },
+        "/work",
+        pol,
+      ).block,
+    ).toBe(true);
+    expect(
+      decide("eval", { code: "open('/work/target.conf','w')" }, "/work", pol)
+        .block,
+    ).toBe(true);
+    // Read-only access to the same write-denied path must remain permitted.
+    expect(readBlocked("/work/target.conf", pol)).toBe(false);
+  });
 });
 
 describe("redactText (defense-in-depth)", () => {
@@ -437,10 +457,71 @@ describe("redactText (defense-in-depth)", () => {
     const blob = `a ghp_${"a".repeat(36)} b AKIA${"1234567890ABCDEF"} c`;
     expect(redactText(blob)).toBe("a [REDACTED] b [REDACTED] c");
   });
-  test("leaves non-secret / too-short text unchanged (negative)", () => {
+  test("leaves non-secret / too-short / credential-free text unchanged (negative)", () => {
     expect(redactText("hello world")).toBe("hello world");
     expect(redactText("ghp_tooshort")).toBe("ghp_tooshort");
     expect(redactText("")).toBe("");
+    // FP guards — secret-adjacent shapes that must NOT be redacted.
+    expect(redactText("a1b2c3d4e5".repeat(4))).toBe("a1b2c3d4e5".repeat(4)); // git SHA (40-hex)
+    expect(redactText("12345678-1234-1234-1234-123456789012")).toBe(
+      "12345678-1234-1234-1234-123456789012",
+    ); // UUID
+    expect(redactText("https://user@github.com/x")).toBe(
+      "https://user@github.com/x",
+    ); // URL user, no password
+    expect(redactText("https://example.com:8080/path")).toBe(
+      "https://example.com:8080/path",
+    ); // port, not credentials
+  });
+});
+
+describe("redactText — provider token shapes (positive)", () => {
+  test("redacts newly-added provider token shapes", () => {
+    for (const s of [
+      `gho_${"a".repeat(36)}`, // GitHub CLI OAuth token
+      `glpat-${"a".repeat(20)}`,
+      `xapp-${"1234567890abc"}`,
+      `AIza${"a".repeat(35)}`,
+      `ya29.${"a".repeat(30)}`,
+      `npm_${"a".repeat(36)}`,
+      `pypi-${"a".repeat(20)}`,
+      `SG.${"a".repeat(22)}.${"b".repeat(43)}`,
+      `sk_live_${"a".repeat(24)}`,
+      `dop_v1_${"a1b2c3d4".repeat(8)}`,
+      `shpat_${"a1b2c3d4".repeat(4)}`,
+      `SK${"a1b2c3d4".repeat(4)}`,
+      `M${"a".repeat(23)}.${"a".repeat(6)}.${"a".repeat(27)}`,
+      `123456789-${"a".repeat(32)}.apps.googleusercontent.com`,
+      `eyJ${"a".repeat(10)}.eyJ${"a".repeat(10)}.${"a".repeat(20)}`,
+    ])
+      expect(redactText(s)).toBe("[REDACTED]");
+    // AWS secret access key only redacts in context (label + value).
+    expect(redactText(`aws_secret_access_key = ${"A".repeat(40)}`)).toBe(
+      "[REDACTED]",
+    );
+    // Slack webhook keeps the scheme, redacts the secret path.
+    expect(
+      redactText(`https://hooks.slack.com/services/T0/B0/${"a".repeat(20)}`),
+    ).toBe("https://[REDACTED]");
+  });
+});
+
+describe("redactText — credential URLs (positive)", () => {
+  test("redacts credentials embedded in connection URLs", () => {
+    expect(
+      redactText(
+        "postgres://postgresAdmin:posgresPassword@postgres:5432/my-db",
+      ),
+    ).toBe("[REDACTED]");
+    expect(redactText("rediss://:password@redis:6379/0")).toBe("[REDACTED]");
+    // secret in the query string is swept in with the DSN.
+    expect(redactText("postgres://u:p@h/db?password=hunter2")).toBe(
+      "[REDACTED]",
+    );
+    // only the URL is redacted; surrounding JSON delimiters are preserved.
+    expect(redactText('{"url":"mysql://a:b@db/x"}')).toBe(
+      '{"url":"[REDACTED]"}',
+    );
   });
 });
 
@@ -457,7 +538,7 @@ describe("loadPolicyEntries (settings file merge)", () => {
       const { deny, allow } = loadPolicyEntries([f]);
       expect(deny).toContain("Read(/x/y)");
       expect(deny).toContain("Read(**/.env*)");
-      expect(deny).not.toContain(123 as unknown as string);
+      expect(deny).not.toContain("123");
       expect(allow).toContain("Read(/x/y/z)");
       expect(allow).toEqual(expect.arrayContaining(EMBEDDED_ALLOW));
     });
