@@ -5,7 +5,7 @@ npm.package_manager = "bun"
 [tools]
 bun = "1"
 node = "24"
-hk = "1.48.0"
+hk = "1.49.0"
 pkl = "0.31"
 
 [hooks]
