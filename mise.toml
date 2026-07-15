@@ -5,8 +5,8 @@ npm.package_manager = "bun"
 [tools]
 bun = "1"
 node = "24"
-hk = "1.49.0"
-pkl = "0.31"
+hk = "1.51.0"
+pkl = "0.32"
 
 [hooks]
 enter = ["hk install --mise"]
