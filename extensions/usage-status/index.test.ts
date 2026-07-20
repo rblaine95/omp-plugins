@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import usageStatus, {
   formatReset,
@@ -302,11 +302,44 @@ async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 5; i++) await Promise.resolve();
 }
 
+const FAKE_THEME = {
+  fg: (_c: string, t: string) => t,
+  sep: { dot: " · ", pipe: "|" },
+};
+
+interface UiCtxOptions {
+  reports: UsageReportLike[];
+  widgetCalls: unknown[];
+  hasUI?: boolean;
+  onFetch?: (opts: {
+    baseUrlResolver: (p: string) => string | undefined;
+  }) => void;
+}
+
+function uiCtx(o: UiCtxOptions): ExtensionContext {
+  return {
+    hasUI: o.hasUI ?? true,
+    ui: { setWidget: (...args: unknown[]) => o.widgetCalls.push(args) },
+    modelRegistry: {
+      getProviderBaseUrl: (p: string) => `https://api/${p}`,
+      authStorage: {
+        fetchUsageReports: (opts: {
+          baseUrlResolver: (p: string) => string | undefined;
+        }) => {
+          o.onFetch?.(opts);
+          return Promise.resolve(o.reports);
+        },
+      },
+    },
+  } as unknown as ExtensionContext;
+}
+
 describe("usageStatus wiring", () => {
   test("installs an aboveEditor widget that renders live usage; shutdown clears it", async () => {
     const handlers: Record<string, Handler> = {};
-    const widgetCalls: [string, unknown, unknown][] = [];
+    const widgetCalls: unknown[] = [];
     let renders = 0;
+    let baseUrl: string | undefined;
     const reports: UsageReportLike[] = [
       {
         provider: "anthropic",
@@ -319,18 +352,13 @@ describe("usageStatus wiring", () => {
         ],
       },
     ];
-    const ctx = {
-      hasUI: true,
-      ui: {
-        setWidget: (key: string, content: unknown, opts: unknown) =>
-          widgetCalls.push([key, content, opts]),
+    const ctx = uiCtx({
+      reports,
+      widgetCalls,
+      onFetch: (o) => {
+        baseUrl = o.baseUrlResolver("anthropic");
       },
-      modelRegistry: {
-        getProviderBaseUrl: (p: string) => `https://api/${p}`,
-        authStorage: { fetchUsageReports: () => Promise.resolve(reports) },
-      },
-    } as unknown as ExtensionContext;
-
+    });
     usageStatus(fakePi(handlers));
     try {
       handlers["session_start"]?.({}, ctx);
@@ -342,12 +370,10 @@ describe("usageStatus wiring", () => {
       ];
       expect(key).toBe("usage-status");
       expect(opts).toEqual({ placement: "aboveEditor" });
-      const theme = {
-        fg: (_c: string, t: string) => t,
-        sep: { dot: " · ", pipe: "|" },
-      };
-      const component = factory({ requestRender: () => renders++ }, theme);
+      const component = factory({ requestRender: () => renders++ }, FAKE_THEME);
+      expect(component.render(200)).toEqual([]); // no data fetched yet
       await flushMicrotasks();
+      expect(baseUrl).toBe("https://api/anthropic");
       expect(renders).toBeGreaterThan(0);
       expect(component.render(200)).toEqual(["Claude 5h 62% (1h30m)"]);
       expect(component.render(13)).toEqual(["Claude 5h 62%"]); // drops reset to fit
@@ -368,24 +394,57 @@ describe("usageStatus headless", () => {
     const handlers: Record<string, Handler> = {};
     const widgetCalls: unknown[] = [];
     let fetched = false;
-    const ctx = {
+    const ctx = uiCtx({
+      reports: [],
+      widgetCalls,
       hasUI: false,
-      ui: { setWidget: (...args: unknown[]) => widgetCalls.push(args) },
-      modelRegistry: {
-        getProviderBaseUrl: () => undefined,
-        authStorage: {
-          fetchUsageReports: () => {
-            fetched = true;
-            return Promise.resolve([]);
-          },
-        },
+      onFetch: () => {
+        fetched = true;
       },
-    } as unknown as ExtensionContext;
-
+    });
     usageStatus(fakePi(handlers));
     handlers["session_start"]?.({}, ctx);
     await flushMicrotasks();
     expect(fetched).toBe(false);
     expect(widgetCalls).toHaveLength(0);
+  });
+});
+
+describe("usageStatus refresh", () => {
+  test("fires the interval tick to re-render and reinstalls on session_switch", async () => {
+    jest.useFakeTimers();
+    const handlers: Record<string, Handler> = {};
+    const widgetCalls: unknown[] = [];
+    let renders = 0;
+    let fetches = 0;
+    const reports: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        limits: [limit({ windowId: "5h", remainingFraction: 0.5 })],
+      },
+    ];
+    const ctx = uiCtx({
+      reports,
+      widgetCalls,
+      onFetch: () => {
+        fetches++;
+      },
+    });
+    try {
+      usageStatus(fakePi(handlers));
+      handlers["session_start"]?.({}, ctx);
+      const factory = (widgetCalls[0] as [string, WidgetFactory, unknown])[1];
+      factory({ requestRender: () => renders++ }, FAKE_THEME);
+      await flushMicrotasks();
+      const before = renders;
+      jest.advanceTimersByTime(60_000); // interval → tick → redraw
+      expect(renders).toBeGreaterThan(before);
+      handlers["session_switch"]?.({}, ctx); // resets state and reinstalls
+      expect(widgetCalls.length).toBeGreaterThan(1);
+      expect(fetches).toBeGreaterThanOrEqual(2);
+    } finally {
+      handlers["session_shutdown"]?.({}, ctx);
+      jest.useRealTimers();
+    }
   });
 });
