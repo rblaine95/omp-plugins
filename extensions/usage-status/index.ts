@@ -274,22 +274,24 @@ export function formatUsageStatus(
     (r): r is UsageReportLike =>
       !!r && typeof r.provider === "string" && Array.isArray(r.limits),
   );
-  const counts = new Map<string, number>();
-  for (const report of valid)
-    counts.set(report.provider, (counts.get(report.provider) ?? 0) + 1);
-
-  const entries: { label: string; windows: UsageLimitLike[] }[] = [];
+  const rendered: { report: UsageReportLike; windows: UsageLimitLike[] }[] = [];
   for (const report of valid) {
     const windows = selectWindows(report.limits);
-    if (windows.length === 0) continue;
+    if (windows.length > 0) rendered.push({ report, windows });
+  }
+  const counts = new Map<string, number>();
+  for (const { report } of rendered)
+    counts.set(report.provider, (counts.get(report.provider) ?? 0) + 1);
+
+  const entries = rendered.map(({ report, windows }) => {
     const base = providerLabel(report.provider);
-    // Disambiguate with an account label only when a provider has >1 account.
+    // Disambiguate with an account label only when a provider has >1 rendered account.
     const label =
       (counts.get(report.provider) ?? 0) > 1
         ? `${base}:${accountLabel(report)}`
         : base;
-    entries.push({ label, windows });
-  }
+    return { label, windows };
+  });
   entries.sort((a, b) => a.label.localeCompare(b.label));
 
   const parts = entries.map(

@@ -287,6 +287,22 @@ describe("formatUsageStatus multi-account", () => {
     ];
     expect(formatUsageStatus(reports, NOW)).toBe("Claude 5h 40%");
   });
+
+  test("uses the base label when only one of a provider's accounts renders", () => {
+    const reports: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        metadata: { email: "bob@work.com" },
+        limits: [limit({ windowId: "5h", remainingFraction: 0.4 })],
+      },
+      {
+        provider: "anthropic",
+        metadata: { email: "alice@home.com" },
+        limits: [limit({ windowId: "monthly" })], // no remaining → not rendered
+      },
+    ];
+    expect(formatUsageStatus(reports, NOW)).toBe("Claude 5h 40%");
+  });
 });
 
 type Handler = (event: unknown, ctx: unknown) => void;
