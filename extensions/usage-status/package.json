@@ -1,0 +1,11 @@
+{
+  "name": "usage-status",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Show remaining subscription usage with reset countdowns for every provider /usage reports, in a color-coded row above the omp editor.",
+  "omp": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

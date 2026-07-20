@@ -70,6 +70,7 @@ what release-please parses on `master`.
 
 ## Included extensions
 
-| Extension     | What it does                                                                                                                                               |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rules-guard` | Enforces the Claude `permissions` allow/deny policy across every omp tool. Read the `index.ts` docblock for the threat model before touching policy logic. |
+| Extension      | What it does                                                                                                                                               |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rules-guard`  | Enforces the Claude `permissions` allow/deny policy across every omp tool. Read the `index.ts` docblock for the threat model before touching policy logic. |
+| `usage-status` | Color-coded `aboveEditor` widget row showing remaining usage + reset countdowns for every provider/account `authStorage.fetchUsageReports` returns (data-driven, like `/usage`), not a fixed provider list. |

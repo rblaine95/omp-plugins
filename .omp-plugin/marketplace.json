@@ -1,0 +1,33 @@
+{
+  "name": "rblaine95",
+  "owner": {
+    "name": "rblaine96"
+  },
+  "metadata": {
+    "description": "OMP plugins maintained by rblaine95"
+  },
+  "plugins": [
+    {
+      "name": "rules-guard",
+      "description": "Enforce the Claude permissions.deny policy across all omp tools (read/write/edit/find/search/bash/eval/browser).",
+      "version": "0.0.0",
+      "source": {
+        "source": "github",
+        "repo": "rblaine95/omp-plugins"
+      },
+      "repository": "https://github.com/rblaine95/omp-plugins",
+      "license": "MIT"
+    },
+    {
+      "name": "usage-status",
+      "description": "Show remaining subscription usage with reset countdowns for every provider /usage reports, in a color-coded row above the omp editor.",
+      "version": "0.0.0",
+      "source": {
+        "source": "github",
+        "repo": "rblaine95/omp-plugins"
+      },
+      "repository": "https://github.com/rblaine95/omp-plugins",
+      "license": "MIT"
+    }
+  ]
+}

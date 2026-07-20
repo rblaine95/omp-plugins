@@ -46,9 +46,10 @@ omp plugin uninstall @rblaine95/omp-plugins
 
 ## Included extensions
 
-| Extension     | What it does                                                                                                                                |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rules-guard` | Enforces the Claude `permissions` allow/deny policy across every omp tool (read/write/edit/find/search/bash/eval/browser), not just `bash`. |
+| Extension      | What it does                                                                                                                                        |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rules-guard`  | Enforces the Claude `permissions` allow/deny policy across every omp tool (read/write/edit/find/search/bash/eval/browser), not just `bash`.         |
+| `usage-status` | Color-coded row above the editor showing remaining usage with reset countdowns for every subscription `/usage` reports (Claude, Codex, Gemini, Grok, OpenCode, Cursor, …), so you don't have to run `/usage`. |
 
 ## Local development
 

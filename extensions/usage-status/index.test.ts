@@ -1,0 +1,391 @@
+import { describe, expect, test } from "bun:test";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import usageStatus, {
+  formatReset,
+  formatUsageStatus,
+  providerLabel,
+  type RowStyle,
+  remainingPercent,
+  type UsageReportLike,
+  usageColor,
+  windowToken,
+} from "./index";
+
+const NOW = 1_700_000_000_000;
+const MIN = 60_000;
+const HR = 60 * MIN;
+const DAY = 24 * HR;
+
+function limit(opts: {
+  windowId?: string;
+  windowIdField?: string;
+  windowLabel?: string;
+  durationMs?: number;
+  resetsAt?: number;
+  tier?: string;
+  usedFraction?: number;
+  remainingFraction?: number;
+}): UsageReportLike["limits"][number] {
+  return {
+    scope: { windowId: opts.windowId, tier: opts.tier },
+    window: {
+      id: opts.windowIdField,
+      label: opts.windowLabel,
+      durationMs: opts.durationMs,
+      resetsAt: opts.resetsAt,
+    },
+    amount: {
+      usedFraction: opts.usedFraction,
+      remainingFraction: opts.remainingFraction,
+    },
+  };
+}
+
+describe("formatReset", () => {
+  test("renders minutes under an hour", () => {
+    expect(formatReset(47 * MIN)).toBe("47m");
+  });
+  test("renders hours and minutes", () => {
+    expect(formatReset(133 * MIN)).toBe("2h13m");
+  });
+  test("renders days, hours, and minutes together", () => {
+    expect(formatReset(6 * DAY + 23 * HR + 58 * MIN)).toBe("6d23h58m");
+  });
+  test("rounds partial minutes up and floors at <1m", () => {
+    expect(formatReset(30_000)).toBe("1m");
+    expect(formatReset(0)).toBe("<1m");
+    expect(formatReset(-1000)).toBe("<1m");
+  });
+});
+
+describe("providerLabel", () => {
+  test("uses curated brands for known providers", () => {
+    expect(providerLabel("anthropic")).toBe("Claude");
+    expect(providerLabel("openai-codex")).toBe("Codex");
+    expect(providerLabel("xai")).toBe("Grok");
+    expect(providerLabel("opencode-zen")).toBe("OpenCode Zen");
+  });
+  test("title-cases unknown provider ids", () => {
+    expect(providerLabel("some-new-provider")).toBe("Some New Provider");
+    expect(providerLabel("wafer")).toBe("Wafer");
+  });
+});
+
+describe("windowToken", () => {
+  test("derives a single-unit token from duration", () => {
+    expect(windowToken(limit({ durationMs: 5 * HR }))).toBe("5h");
+    expect(windowToken(limit({ durationMs: 7 * DAY }))).toBe("7d");
+    expect(windowToken(limit({ durationMs: 30 * DAY }))).toBe("30d");
+    expect(windowToken(limit({ durationMs: 45 * MIN }))).toBe("45m");
+  });
+  test("falls back to numeric ids and word forms without a duration", () => {
+    expect(windowToken(limit({ windowId: "5h" }))).toBe("5h");
+    expect(windowToken(limit({ windowIdField: "rolling-5h" }))).toBe("5h");
+    expect(windowToken(limit({ windowIdField: "weekly" }))).toBe("7d");
+    expect(windowToken(limit({ windowIdField: "monthly" }))).toBe("30d");
+  });
+});
+
+describe("remainingPercent", () => {
+  test("prefers remainingFraction, falls back to 1 - usedFraction, clamps", () => {
+    expect(
+      remainingPercent(limit({ remainingFraction: 0.58, usedFraction: 0.1 })),
+    ).toBe(58);
+    expect(remainingPercent(limit({ usedFraction: 0.82 }))).toBe(18);
+    expect(remainingPercent(limit({ usedFraction: 1.5 }))).toBe(0);
+    expect(remainingPercent(limit({ remainingFraction: 1.2 }))).toBe(100);
+    expect(remainingPercent(limit({}))).toBeUndefined();
+  });
+});
+
+describe("usageColor", () => {
+  test("green when plenty remains, yellow when low, red when critical", () => {
+    expect(usageColor(100)).toBe("success");
+    expect(usageColor(51)).toBe("success");
+    expect(usageColor(50)).toBe("warning");
+    expect(usageColor(21)).toBe("warning");
+    expect(usageColor(20)).toBe("error");
+    expect(usageColor(0)).toBe("error");
+  });
+});
+
+describe("formatUsageStatus", () => {
+  test("empty reports → undefined", () => {
+    expect(formatUsageStatus([], NOW)).toBeUndefined();
+  });
+
+  test("renders every reported provider and its windows, sorted by label", () => {
+    const reports: UsageReportLike[] = [
+      {
+        provider: "openai-codex",
+        limits: [
+          limit({
+            windowId: "5h",
+            usedFraction: 0.08,
+            resetsAt: NOW + 47 * MIN,
+          }),
+          limit({ windowId: "7d", usedFraction: 0.6, resetsAt: NOW + 3 * DAY }),
+        ],
+      },
+      {
+        provider: "anthropic",
+        limits: [
+          limit({
+            windowId: "5h",
+            remainingFraction: 0.58,
+            resetsAt: NOW + 133 * MIN,
+          }),
+          limit({
+            windowId: "7d",
+            remainingFraction: 0.82,
+            resetsAt: NOW + 5 * DAY,
+          }),
+        ],
+      },
+    ];
+    expect(formatUsageStatus(reports, NOW)).toBe(
+      "Claude 5h 58% (2h13m) · 7d 82% (5d)  |  Codex 5h 92% (47m) · 7d 40% (3d)",
+    );
+  });
+});
+
+describe("formatUsageStatus dynamic providers", () => {
+  test("renders arbitrary providers and window shapes dynamically", () => {
+    const reports: UsageReportLike[] = [
+      {
+        provider: "xai",
+        limits: [
+          limit({
+            windowId: "5h",
+            remainingFraction: 0.9,
+            resetsAt: NOW + 1 * HR,
+          }),
+        ],
+      },
+      {
+        provider: "opencode-go",
+        limits: [
+          limit({
+            windowIdField: "rolling-5h",
+            durationMs: 5 * HR,
+            remainingFraction: 0.7,
+          }),
+          limit({
+            windowIdField: "weekly",
+            durationMs: 7 * DAY,
+            remainingFraction: 0.4,
+          }),
+          limit({
+            windowIdField: "monthly",
+            durationMs: 30 * DAY,
+            remainingFraction: 0.2,
+          }),
+        ],
+      },
+    ];
+    expect(formatUsageStatus(reports, NOW)).toBe(
+      "Grok 5h 90% (1h)  |  OpenCode 5h 70% · 7d 40% · 30d 20%",
+    );
+  });
+});
+
+describe("formatUsageStatus styling", () => {
+  test("applies theme colors to label, percent, and reset", () => {
+    const tag: RowStyle = {
+      fg: (c, t) => `[${c}]${t}`,
+      dot: " · ",
+      pipe: " | ",
+      showReset: true,
+    };
+    const reports: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        limits: [
+          limit({
+            windowId: "5h",
+            remainingFraction: 0.1,
+            resetsAt: NOW + 30 * MIN,
+          }),
+        ],
+      },
+    ];
+    expect(formatUsageStatus(reports, NOW, tag)).toBe(
+      "[accent]Claude 5h [error]10% [dim](30m)",
+    );
+  });
+});
+
+describe("formatUsageStatus window selection", () => {
+  test("prefers the untiered limit over a tiered duplicate", () => {
+    const reports: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        limits: [
+          limit({ windowId: "7d", tier: "fable", remainingFraction: 0.1 }),
+          limit({ windowId: "7d", remainingFraction: 0.75 }),
+        ],
+      },
+    ];
+    expect(formatUsageStatus(reports, NOW)).toBe("Claude 7d 75%");
+  });
+
+  test("omits reset countdown when the window has already reset", () => {
+    const reports: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        limits: [
+          limit({
+            windowId: "5h",
+            remainingFraction: 0.3,
+            resetsAt: NOW - 5 * MIN,
+          }),
+        ],
+      },
+    ];
+    expect(formatUsageStatus(reports, NOW)).toBe("Claude 5h 30%");
+  });
+
+  test("skips a report whose windows have no resolvable remaining", () => {
+    const reports: UsageReportLike[] = [
+      { provider: "cursor", limits: [limit({ windowId: "monthly" })] },
+    ];
+    expect(formatUsageStatus(reports, NOW)).toBeUndefined();
+  });
+});
+
+describe("formatUsageStatus multi-account", () => {
+  test("labels each account when a provider reports more than one", () => {
+    const reports: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        metadata: { email: "bob@work.com" },
+        limits: [limit({ windowId: "5h", remainingFraction: 0.4 })],
+      },
+      {
+        provider: "anthropic",
+        metadata: { email: "alice@home.com" },
+        limits: [limit({ windowId: "5h", remainingFraction: 0.9 })],
+      },
+    ];
+    expect(formatUsageStatus(reports, NOW)).toBe(
+      "Claude:alice 5h 90%  |  Claude:bob 5h 40%",
+    );
+  });
+
+  test("omits the account label for a single-account provider", () => {
+    const reports: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        metadata: { email: "solo@x.com" },
+        limits: [limit({ windowId: "5h", remainingFraction: 0.4 })],
+      },
+    ];
+    expect(formatUsageStatus(reports, NOW)).toBe("Claude 5h 40%");
+  });
+});
+
+type Handler = (event: unknown, ctx: unknown) => void;
+type WidgetFactory = (
+  tui: unknown,
+  theme: unknown,
+) => { render: (width: number) => readonly string[] };
+
+function fakePi(handlers: Record<string, Handler>): ExtensionAPI {
+  return {
+    on: (ev: string, fn: Handler) => {
+      handlers[ev] = fn;
+    },
+  } as unknown as ExtensionAPI;
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+}
+
+describe("usageStatus wiring", () => {
+  test("installs an aboveEditor widget that renders live usage; shutdown clears it", async () => {
+    const handlers: Record<string, Handler> = {};
+    const widgetCalls: [string, unknown, unknown][] = [];
+    let renders = 0;
+    const reports: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        limits: [
+          limit({
+            windowId: "5h",
+            remainingFraction: 0.62,
+            resetsAt: Date.now() + 90 * MIN,
+          }),
+        ],
+      },
+    ];
+    const ctx = {
+      hasUI: true,
+      ui: {
+        setWidget: (key: string, content: unknown, opts: unknown) =>
+          widgetCalls.push([key, content, opts]),
+      },
+      modelRegistry: {
+        getProviderBaseUrl: (p: string) => `https://api/${p}`,
+        authStorage: { fetchUsageReports: () => Promise.resolve(reports) },
+      },
+    } as unknown as ExtensionContext;
+
+    usageStatus(fakePi(handlers));
+    try {
+      handlers["session_start"]?.({}, ctx);
+      expect(widgetCalls).toHaveLength(1);
+      const [key, factory, opts] = widgetCalls[0] as [
+        string,
+        WidgetFactory,
+        unknown,
+      ];
+      expect(key).toBe("usage-status");
+      expect(opts).toEqual({ placement: "aboveEditor" });
+      const theme = {
+        fg: (_c: string, t: string) => t,
+        sep: { dot: " · ", pipe: "|" },
+      };
+      const component = factory({ requestRender: () => renders++ }, theme);
+      await flushMicrotasks();
+      expect(renders).toBeGreaterThan(0);
+      expect(component.render(200)).toEqual(["Claude 5h 62% (1h30m)"]);
+      expect(component.render(13)).toEqual(["Claude 5h 62%"]); // drops reset to fit
+      expect(component.render(5)).toEqual([]); // hides when nothing fits
+    } finally {
+      handlers["session_shutdown"]?.({}, ctx);
+    }
+    expect(widgetCalls.at(-1)).toEqual([
+      "usage-status",
+      undefined,
+      { placement: "aboveEditor" },
+    ]);
+  });
+});
+
+describe("usageStatus headless", () => {
+  test("headless mode (no UI) neither installs a widget nor fetches", async () => {
+    const handlers: Record<string, Handler> = {};
+    const widgetCalls: unknown[] = [];
+    let fetched = false;
+    const ctx = {
+      hasUI: false,
+      ui: { setWidget: (...args: unknown[]) => widgetCalls.push(args) },
+      modelRegistry: {
+        getProviderBaseUrl: () => undefined,
+        authStorage: {
+          fetchUsageReports: () => {
+            fetched = true;
+            return Promise.resolve([]);
+          },
+        },
+      },
+    } as unknown as ExtensionContext;
+
+    usageStatus(fakePi(handlers));
+    handlers["session_start"]?.({}, ctx);
+    await flushMicrotasks();
+    expect(fetched).toBe(false);
+    expect(widgetCalls).toHaveLength(0);
+  });
+});
