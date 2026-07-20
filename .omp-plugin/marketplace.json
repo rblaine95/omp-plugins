@@ -13,7 +13,8 @@
       "version": "0.0.0",
       "source": {
         "source": "github",
-        "repo": "rblaine95/omp-plugins"
+        "repo": "rblaine95/omp-plugins",
+        "path": "extensions/rules-guard"
       },
       "repository": "https://github.com/rblaine95/omp-plugins",
       "license": "MIT"
@@ -24,7 +25,8 @@
       "version": "0.0.0",
       "source": {
         "source": "github",
-        "repo": "rblaine95/omp-plugins"
+        "repo": "rblaine95/omp-plugins",
+        "path": "extensions/usage-status"
       },
       "repository": "https://github.com/rblaine95/omp-plugins",
       "license": "MIT"
