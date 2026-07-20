@@ -556,3 +556,57 @@ describe("usageStatus session switch", () => {
     }
   });
 });
+
+describe("usageStatus stale fetch", () => {
+  test("a fetch in flight during a switch cannot overwrite the new session", async () => {
+    const handlers: Record<string, Handler> = {};
+    const widgetCalls: unknown[] = [];
+    let resolveFirst: (() => void) | undefined;
+    const first: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        limits: [limit({ windowId: "5h", remainingFraction: 0.9 })],
+      },
+    ];
+    const second: UsageReportLike[] = [
+      {
+        provider: "openai-codex",
+        limits: [limit({ windowId: "5h", remainingFraction: 0.2 })],
+      },
+    ];
+    let call = 0;
+    const ctx = {
+      hasUI: true,
+      ui: { setWidget: (...args: unknown[]) => widgetCalls.push(args) },
+      modelRegistry: {
+        getProviderBaseUrl: () => undefined,
+        authStorage: {
+          fetchUsageReports: () => {
+            call += 1;
+            return call === 1
+              ? new Promise<UsageReportLike[]>((res) => {
+                  resolveFirst = () => res(first);
+                })
+              : Promise.resolve(second);
+          },
+        },
+      },
+    } as unknown as ExtensionContext;
+    usageStatus(fakePi(handlers));
+    try {
+      handlers["session_start"]?.({}, ctx); // fetch #1 starts, stays pending
+      handlers["session_switch"]?.({}, ctx); // teardown + fetch #2
+      const comp = (widgetCalls.at(-1) as [string, WidgetFactory, unknown])[1](
+        { requestRender() {} },
+        FAKE_THEME,
+      );
+      await flushMicrotasks();
+      expect(comp.render(200)).toEqual(["Codex 5h 20%"]);
+      resolveFirst?.(); // stale fetch #1 resolves late
+      await flushMicrotasks();
+      expect(comp.render(200)).toEqual(["Codex 5h 20%"]); // not clobbered
+    } finally {
+      handlers["session_shutdown"]?.({}, ctx);
+    }
+  });
+});

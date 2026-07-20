@@ -348,6 +348,9 @@ interface UsageState {
   reports: UsageReportLike[];
   fetchedAt: number;
   inFlight: boolean;
+  /** Bumped on every teardown; a fetch whose captured value no longer matches
+   *  has been superseded by a session switch and must not touch state. */
+  generation: number;
   timer: Timer | undefined;
   ctx: ExtensionContext | undefined;
   component: UsageRow | undefined;
@@ -395,20 +398,22 @@ async function fetchReports(state: UsageState): Promise<void> {
     typeof authStorage?.fetchUsageReports !== "function"
   )
     return;
+  const generation = state.generation;
   state.inFlight = true;
   try {
     const result = await authStorage.fetchUsageReports({
       baseUrlResolver: (provider) => registry.getProviderBaseUrl(provider),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
+    if (generation !== state.generation) return; // superseded by a session switch
     state.reports = sanitizeUsageReports(result);
     state.fetchedAt = Date.now();
   } catch {
     // Keep the stale cache — the countdown still ticks from cached reset times.
   } finally {
-    state.inFlight = false;
+    if (generation === state.generation) state.inFlight = false;
   }
-  redraw(state);
+  if (generation === state.generation) redraw(state);
 }
 
 function tick(state: UsageState): void {
@@ -422,6 +427,9 @@ function stop(state: UsageState): void {
   clearWidget(state);
   state.component = undefined;
   state.tui = undefined;
+  // Invalidate any in-flight fetch and free the slot for the next session.
+  state.generation += 1;
+  state.inFlight = false;
 }
 
 function start(state: UsageState, ctx: ExtensionContext): void {
@@ -440,6 +448,7 @@ export default function usageStatus(pi: ExtensionAPI): void {
     reports: [],
     fetchedAt: 0,
     inFlight: false,
+    generation: 0,
     timer: undefined,
     ctx: undefined,
     component: undefined,
