@@ -135,10 +135,11 @@ export function windowToken(limit: UsageLimitLike): string {
 
 /** Remaining availability as an integer percent (0-100), or undefined. */
 export function remainingPercent(limit: UsageLimitLike): number | undefined {
-  const { remainingFraction, usedFraction } = limit.amount;
+  const amount = limit?.amount;
+  if (!amount) return undefined;
   const fraction =
-    remainingFraction ??
-    (usedFraction !== undefined ? 1 - usedFraction : undefined);
+    amount.remainingFraction ??
+    (amount.usedFraction !== undefined ? 1 - amount.usedFraction : undefined);
   if (fraction === undefined) return undefined;
   return Math.round(Math.min(1, Math.max(0, fraction)) * 100);
 }
@@ -212,6 +213,35 @@ function formatWindow(
       ? ` ${style.fg("dim", `(${formatReset(resetsAt - now)})`)}`
       : "";
   return `${windowToken(limit)} ${pct}${reset}`;
+}
+
+/** Runtime guard for a well-formed limit: network data is cast, not validated,
+ *  so a malformed entry must be dropped before it reaches `render()`. */
+function isUsageLimit(value: unknown): value is UsageLimitLike {
+  if (typeof value !== "object" || value === null) return false;
+  const limit = value as UsageLimitLike;
+  return (
+    typeof limit.amount === "object" &&
+    limit.amount !== null &&
+    typeof limit.scope === "object" &&
+    limit.scope !== null
+  );
+}
+
+/** Validate raw usage data before it is treated as `UsageReportLike[]`: keep only
+ *  report objects with a string provider and array limits, and drop malformed
+ *  limits, so nothing unsafe reaches `render()`. Network data is cast, not typed. */
+function sanitizeUsageReports(value: unknown): UsageReportLike[] {
+  if (!Array.isArray(value)) return [];
+  const reports: UsageReportLike[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const report = entry as UsageReportLike;
+    if (typeof report.provider !== "string" || !Array.isArray(report.limits))
+      continue;
+    reports.push({ ...report, limits: report.limits.filter(isUsageLimit) });
+  }
+  return reports;
 }
 
 /** Build the usage row from every reported subscription, or undefined when empty. */
@@ -351,7 +381,7 @@ async function fetchReports(state: UsageState): Promise<void> {
       baseUrlResolver: (provider) => registry.getProviderBaseUrl(provider),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    state.reports = (result as UsageReportLike[] | null) ?? [];
+    state.reports = sanitizeUsageReports(result);
     state.fetchedAt = Date.now();
   } catch {
     // Keep the stale cache — the countdown still ticks from cached reset times.

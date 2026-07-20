@@ -95,6 +95,11 @@ describe("remainingPercent", () => {
     expect(remainingPercent(limit({ usedFraction: 1.5 }))).toBe(0);
     expect(remainingPercent(limit({ remainingFraction: 1.2 }))).toBe(100);
     expect(remainingPercent(limit({}))).toBeUndefined();
+    expect(
+      remainingPercent({
+        scope: {},
+      } as unknown as UsageReportLike["limits"][number]),
+    ).toBeUndefined();
   });
 });
 
@@ -445,6 +450,101 @@ describe("usageStatus refresh", () => {
     } finally {
       handlers["session_shutdown"]?.({}, ctx);
       jest.useRealTimers();
+    }
+  });
+});
+
+describe("usageStatus resilience", () => {
+  test("drops malformed reports and limits from the fetch payload", async () => {
+    const handlers: Record<string, Handler> = {};
+    const widgetCalls: unknown[] = [];
+    const malformed = [
+      null,
+      42,
+      { provider: 123, limits: [] },
+      { provider: "x", limits: "nope" },
+      {
+        provider: "anthropic",
+        limits: [
+          null,
+          7,
+          { scope: {} },
+          limit({ windowId: "5h", remainingFraction: 0.4 }),
+        ],
+      },
+    ] as unknown as UsageReportLike[];
+    const ctx = uiCtx({ reports: malformed, widgetCalls });
+    usageStatus(fakePi(handlers));
+    try {
+      handlers["session_start"]?.({}, ctx);
+      const c = (widgetCalls[0] as [string, WidgetFactory, unknown])[1](
+        { requestRender() {} },
+        FAKE_THEME,
+      );
+      await flushMicrotasks();
+      expect(c.render(200)).toEqual(["Claude 5h 40%"]);
+    } finally {
+      handlers["session_shutdown"]?.({}, ctx);
+    }
+  });
+
+  test("ignores a null usage payload without throwing", async () => {
+    const handlers: Record<string, Handler> = {};
+    const widgetCalls: unknown[] = [];
+    const ctx = uiCtx({
+      reports: null as unknown as UsageReportLike[],
+      widgetCalls,
+    });
+    usageStatus(fakePi(handlers));
+    try {
+      handlers["session_start"]?.({}, ctx);
+      const c = (widgetCalls[0] as [string, WidgetFactory, unknown])[1](
+        { requestRender() {} },
+        FAKE_THEME,
+      );
+      await flushMicrotasks();
+      expect(c.render(200)).toEqual([]);
+    } finally {
+      handlers["session_shutdown"]?.({}, ctx);
+    }
+  });
+});
+
+describe("usageStatus session switch", () => {
+  test("clears stale reports and renders freshly fetched usage after a switch", async () => {
+    const handlers: Record<string, Handler> = {};
+    const widgetCalls: unknown[] = [];
+    const reports: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        limits: [limit({ windowId: "5h", remainingFraction: 0.8 })],
+      },
+    ];
+    const ctx = uiCtx({ reports, widgetCalls });
+    usageStatus(fakePi(handlers));
+    try {
+      handlers["session_start"]?.({}, ctx);
+      const first = (widgetCalls[0] as [string, WidgetFactory, unknown])[1](
+        { requestRender() {} },
+        FAKE_THEME,
+      );
+      await flushMicrotasks();
+      expect(first.render(200)).toEqual(["Claude 5h 80%"]);
+      reports[0] = {
+        provider: "openai-codex",
+        limits: [limit({ windowId: "5h", remainingFraction: 0.3 })],
+      };
+      handlers["session_switch"]?.({}, ctx);
+      const second = (widgetCalls[1] as [string, WidgetFactory, unknown])[1](
+        { requestRender() {} },
+        FAKE_THEME,
+      );
+      expect(second).not.toBe(first); // lifecycle reset: fresh component
+      expect(second.render(200)).toEqual([]); // stale reports cleared before refetch
+      await flushMicrotasks();
+      expect(second.render(200)).toEqual(["Codex 5h 30%"]);
+    } finally {
+      handlers["session_shutdown"]?.({}, ctx);
     }
   });
 });
