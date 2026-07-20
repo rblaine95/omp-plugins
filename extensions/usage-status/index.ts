@@ -215,16 +215,36 @@ function formatWindow(
   return `${windowToken(limit)} ${pct}${reset}`;
 }
 
-/** Runtime guard for a well-formed limit: network data is cast, not validated,
- *  so a malformed entry must be dropped before it reaches `render()`. */
+/** Absent, or a string. */
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+/** Absent, or a finite number. */
+function optionalFiniteNumber(value: unknown): boolean {
+  return (
+    value === undefined || (typeof value === "number" && Number.isFinite(value))
+  );
+}
+
+/** Runtime guard for a well-formed limit: network data is cast, not validated, so
+ *  a malformed entry — including wrong-typed nested fields that would crash string
+ *  or number ops in `windowToken`/`formatWindow` — must be dropped before render. */
 function isUsageLimit(value: unknown): value is UsageLimitLike {
   if (typeof value !== "object" || value === null) return false;
-  const limit = value as UsageLimitLike;
+  const { amount, scope, window } = value as UsageLimitLike;
+  if (typeof amount !== "object" || amount === null) return false;
+  if (!optionalFiniteNumber(amount.remainingFraction)) return false;
+  if (!optionalFiniteNumber(amount.usedFraction)) return false;
+  if (typeof scope !== "object" || scope === null) return false;
+  if (!optionalString(scope.windowId) || !optionalString(scope.tier))
+    return false;
+  if (window === undefined) return true;
+  if (typeof window !== "object" || window === null) return false;
+  if (!optionalString(window.id) || !optionalString(window.label)) return false;
   return (
-    typeof limit.amount === "object" &&
-    limit.amount !== null &&
-    typeof limit.scope === "object" &&
-    limit.scope !== null
+    optionalFiniteNumber(window.durationMs) &&
+    optionalFiniteNumber(window.resetsAt)
   );
 }
 
