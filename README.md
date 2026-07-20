@@ -2,18 +2,32 @@
 
 Personal [oh-my-pi](https://omp.sh) extensions, published as one installable plugin.
 
-The repo root is itself the plugin manifest: root `package.json` `omp.extensions` lists
-every extension entry point, so a single `omp plugin install` pulls the whole suite. Each
-extension lives in its own Bun workspace member under `extensions/*` for isolated
+The repo root is itself the plugin manifest: root `package.json` `omp.features` declares
+every extension as a selectable feature (all `default: true`), so a bare `omp plugin
+install` enables the whole suite while a bracketed spec enables just the features you name.
+Each extension lives in its own Bun workspace member under `extensions/*` for isolated
 development and testing.
 
 ## Install
 
+All specs install the same single `omp-plugins` package (both extension directories come
+with it); the bracket only selects which features **load**:
+
 ```sh
-omp plugin install github:rblaine95/omp-plugins
+omp plugin install github:rblaine95/omp-plugins                      # enable whole suite
+omp plugin install 'github:rblaine95/omp-plugins[rules-guard]'       # enable just rules-guard
+omp plugin install 'github:rblaine95/omp-plugins[usage-status]'      # enable just usage-status
+omp plugin install 'github:rblaine95/omp-plugins[*]'                 # all features, explicit
 ```
 
-Extensions load on the next omp start. `omp plugin list` shows `omp-plugins` as enabled.
+Quote any bracketed spec — shells like zsh treat `[...]` as a glob. Extensions load on the
+next omp start. `omp plugin list` shows the one `omp-plugins` package as enabled regardless
+of selection. Change which features load later, without reinstalling, via
+`omp plugin features @rblaine95/omp-plugins`.
+
+> Marketplace installs (`name@marketplace`) cannot activate these — omp loads
+> `omp.extensions`/`omp.features` only for git/npm/`link` installs, never from a marketplace
+> cache. Use the `omp plugin install github:…` commands above.
 
 ## Update
 
@@ -71,5 +85,5 @@ install pulls in zero runtime dependencies.
 ## Adding an extension
 
 1. `mkdir extensions/<name>` with its own `package.json` (`name`, `"version": "0.0.0"`, `omp.extensions: ["./index.ts"]`) — members are not versioned independently.
-2. Add the entry to the root `package.json` `omp.extensions` array, which is what a git install reads.
+2. Add a feature entry to the root `package.json` `omp.features` map — `{ "description": "…", "default": true, "extensions": ["./extensions/<name>/index.ts"] }`. This is what a git install reads; `default: true` keeps it in the bare whole-suite install, and its key becomes the `[<name>]` selector.
 3. `bun install` to register the new workspace member.
