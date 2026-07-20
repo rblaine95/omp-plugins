@@ -4,15 +4,16 @@
 extensions, published as one installable plugin. Install/update/uninstall live in
 [`README.md`](./README.md); this file is for _changing_ the code.
 
-The repo root is the plugin manifest: root `package.json` `omp.extensions` lists every
-entry point, so one install pulls the whole suite. Each extension is a Bun workspace
-member under `extensions/*`. TypeScript run directly by [Bun](https://bun.com/docs/llms.txt)
+The repo root is the plugin manifest: root `package.json` `omp.features` declares every
+extension as a selectable feature (all `default: true`), so a bare install pulls the whole
+suite and a bracketed spec loads a subset. Each extension is a Bun workspace member
+under `extensions/*`. TypeScript run directly by [Bun](https://bun.com/docs/llms.txt)
 (1.x, Node 24) — **no build step**.
 
 ## Layout
 
 ```text
-package.json           root manifest; omp.extensions array = the install contract
+package.json           root manifest; omp.features map = the install contract (one feature per extension)
 extensions/<name>/     one workspace member per extension
   index.ts             entry: default export receives ExtensionAPI, wires pi.on(...) hooks
   index.test.ts        colocated bun:test suite
@@ -65,7 +66,7 @@ what release-please parses on `master`.
 
 1. `mkdir extensions/<name>` with a `package.json` (`name`, `"version": "0.0.0"`,
    `omp.extensions: ["./index.ts"]`).
-2. Add its entry to the **root** `omp.extensions` array — a member missing from it won't load.
+2. Add a feature entry to the **root** `omp.features` map: `"<name>": { "description": "…", "default": true, "extensions": ["./extensions/<name>/index.ts"] }`. `default: true` keeps it in the bare whole-suite install; the key is the `[<name>]` selector. A member missing from it won't load.
 3. `bun install`.
 
 ## Included extensions
