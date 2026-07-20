@@ -427,9 +427,9 @@ export default function usageStatus(pi: ExtensionAPI): void {
   };
   pi.on("session_start", (_event, ctx) => start(state, ctx));
   pi.on("session_switch", (_event, ctx) => {
+    stop(state);
     state.reports = [];
     state.fetchedAt = 0;
-    state.component = undefined;
     start(state, ctx);
   });
   pi.on("session_shutdown", () => stop(state));

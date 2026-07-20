@@ -535,7 +535,12 @@ describe("usageStatus session switch", () => {
         limits: [limit({ windowId: "5h", remainingFraction: 0.3 })],
       };
       handlers["session_switch"]?.({}, ctx);
-      const second = (widgetCalls[1] as [string, WidgetFactory, unknown])[1](
+      expect(widgetCalls[1]).toEqual([
+        "usage-status",
+        undefined,
+        { placement: "aboveEditor" },
+      ]); // old widget torn down before reinstall
+      const second = (widgetCalls[2] as [string, WidgetFactory, unknown])[1](
         { requestRender() {} },
         FAKE_THEME,
       );
