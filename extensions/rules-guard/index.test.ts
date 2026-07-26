@@ -768,7 +768,7 @@ describe("redactMessages — operator-originated carriers", () => {
     const msgs = [
       {
         role: "bashExecution",
-        command: "cat .env",
+        command: `psql ${DSN} -c 'select 1'`,
         output: `SECRET=x\nPOSTGRES=${DSN}\n`,
         exitCode: 0,
         cancelled: false,
@@ -778,8 +778,11 @@ describe("redactMessages — operator-originated carriers", () => {
     ];
     const out = must(redactMessages(msgs)) as typeof msgs;
     expect(out[0]?.output).toBe("SECRET=x\nPOSTGRES=[REDACTED]\n");
+    expect(out[0]?.command).toBe("psql [REDACTED] -c 'select 1'");
     expect(out[0]?.output).not.toContain("postgres://");
+    expect(out[0]?.command).not.toContain("postgres://");
     expect(msgs[0]?.output).toContain(DSN); // input untouched (copy-on-write)
+    expect(msgs[0]?.command).toContain(DSN);
   });
 
   test("redacts pythonExecution output/code and fileMention contents", () => {
@@ -880,19 +883,36 @@ describe("redactMessages — replay-safety invariants", () => {
     ];
     expect(redactMessages(msgs)).toBeUndefined();
   });
+});
 
+describe("redactMessages — opaque payloads are never walked", () => {
   test("never descends into providerPayload or details", () => {
-    const msgs = [
-      {
-        role: "toolResult",
-        content: [{ type: "text", text: "clean" }],
-        details: { nested: DSN },
-        providerPayload: { items: [{ encrypted_content: DSN }] },
-      },
-    ];
-    expect(redactMessages(msgs)).toBeUndefined();
+    // The message MUST be rewritten (its text carries a secret) so this proves
+    // the opaque payloads survive a copy, not merely that nothing happened.
+    const details = { nested: DSN };
+    const providerPayload = { items: [{ encrypted_content: DSN }] };
+    const out = must(
+      redactMessages([
+        {
+          role: "toolResult",
+          content: [{ type: "text", text: DSN }],
+          details,
+          providerPayload,
+        },
+      ]),
+    ) as Array<Record<string, unknown>>;
+    const msg = must(out[0]);
+    expect((msg["content"] as Array<{ text?: string }>)[0]?.text).toBe(
+      "[REDACTED]",
+    );
+    expect(msg["details"]).toBe(details); // same reference, never walked
+    expect(msg["providerPayload"]).toBe(providerPayload);
+    expect(details.nested).toBe(DSN); // and byte-identical inside
+    expect(providerPayload.items[0]?.encrypted_content).toBe(DSN);
   });
+});
 
+describe("redactMessages — sharing & malformed input", () => {
   test("returns undefined when clean, and shares untouched messages", () => {
     const clean = { role: "user", content: "nothing here" };
     const dirty = { role: "bashExecution", output: DSN };
