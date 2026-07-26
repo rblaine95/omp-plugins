@@ -17,8 +17,9 @@
  *   either; it lands as `{ role: "bashExecution", output }`. Blocking these
  *   surfaces is deliberately NOT attempted: they are the user's own shell escape.
  *   The pass redacts a TYPED carrier list — see `REDACT_CONTENT_ROLES` /
- *   `REDACT_STRING_FIELDS` — covering operator-originated bytes: user/developer/
- *   custom/tool-result text, `bashExecution`/`pythonExecution` command+output,
+ *   `REDACT_STRING_FIELDS` — covering operator-originated bytes:
+ *   user/developer/custom/hookMessage/tool-result text,
+ *   `bashExecution`/`pythonExecution` command+output,
  *   `fileMention.files[].content` (`@path` auto-reads), and branch/compaction
  *   summaries. Two categories are excluded because rewriting them BREAKS the
  *   provider, not because they are safe: signed blocks (`assistant` text bound to
@@ -610,24 +611,38 @@ export function redactText(text: string): string {
  * `session-persistence.ts` — "never truncate, externalize, or descend"). Model
  * output is also not what this pass defends against; it targets operator-
  * originated bytes (files, command output, mentions).
+ *
+ * Null-prototype: `role` is untrusted, and on a plain object literal an
+ * `Object.prototype` key (`toString`, `constructor`, …) resolves to an
+ * inherited member, which reads as a table hit.
  */
-const REDACT_CONTENT_ROLES: Record<string, true> = {
-  user: true,
-  developer: true,
-  toolResult: true,
-  custom: true,
-  hookMessage: true,
-};
+const REDACT_CONTENT_ROLES: Record<string, true> = Object.assign(
+  Object.create(null),
+  {
+    user: true,
+    developer: true,
+    toolResult: true,
+    custom: true,
+    hookMessage: true,
+  },
+);
 
-/** Per-role plain-string fields to redact. All unsigned, all operator-facing. */
-const REDACT_STRING_FIELDS: Record<string, readonly string[]> = {
-  // `command`/`code` are redacted too: `!curl -H "Authorization: Bearer …"` is a
-  // real carrier, and neither field is signed.
-  bashExecution: ["command", "output"],
-  pythonExecution: ["code", "output"],
-  branchSummary: ["summary"],
-  compactionSummary: ["summary", "shortSummary"],
-};
+/**
+ * Per-role plain-string fields to redact. All unsigned, all operator-facing.
+ * Null-prototype for the same reason as above, and more sharply: an inherited
+ * member is not nullish, so `?? []` cannot save the `for...of` from throwing.
+ */
+const REDACT_STRING_FIELDS: Record<string, readonly string[]> = Object.assign(
+  Object.create(null),
+  {
+    // `command`/`code` are redacted too: `!curl -H "Authorization: Bearer …"` is a
+    // real carrier, and neither field is signed.
+    bashExecution: ["command", "output"],
+    pythonExecution: ["code", "output"],
+    branchSummary: ["summary"],
+    compactionSummary: ["summary", "shortSummary"],
+  },
+);
 
 /**
  * Copy-on-write redaction of operator-originated text in a message list.

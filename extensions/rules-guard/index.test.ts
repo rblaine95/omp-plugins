@@ -820,6 +820,21 @@ describe("redactMessages — operator-originated carriers", () => {
   });
 });
 
+describe("redactMessages — hookMessage content role", () => {
+  test("redacts hookMessage content", () => {
+    const out = must(
+      redactMessages([
+        {
+          role: "hookMessage",
+          customType: "note",
+          content: [{ type: "text", text: DSN }],
+        },
+      ]),
+    ) as Array<{ content: Array<{ text?: string }> }>;
+    expect(must(out[0]).content[0]?.text).toBe("[REDACTED]");
+  });
+});
+
 describe("redactMessages — compaction & branch summaries", () => {
   test("redacts branch/compaction summaries including snapcompact blocks", () => {
     const out = must(
@@ -900,8 +915,14 @@ describe("redactMessages — replay-safety invariants", () => {
         { role: "fileMention", files: [null, { content: 1 }] },
         { role: "bashExecution" },
         { role: "brandNewFutureType", output: DSN },
+        // Inherited `Object.prototype` member: not nullish, not iterable.
+        { role: "toString", content: DSN },
       ]),
     ).not.toThrow();
+    // ...and stays inert rather than counting as a content role.
+    expect(
+      redactMessages([{ role: "toString", content: DSN }]),
+    ).toBeUndefined();
   });
 });
 
