@@ -65,8 +65,10 @@ Denied bash command patterns. `Bash(...)` rules are matched against each command
 of a shell-command field (`command`, `cmd`, `script`), so `rm -rf *` or `git push --force`
 is blocked in `bash` and any other tool that carries such a field.
 
-Secret-shaped output redaction on `tool_result`, as defense in depth. Substrings that
-look like credentials are replaced with `[REDACTED]`:
+Secret-shaped text redaction, as defense in depth. It runs in two passes — `tool_result`
+for tool output (patched at record time) and `context` for messages on their way to the
+model (transient; your terminal and the saved transcript keep the real bytes). Substrings
+that look like credentials are replaced with `[REDACTED]`:
 
 - Anthropic (`sk-ant-...`), OpenAI (`sk-...`, `pk-...`)
 - Stripe (`sk_live_...`, `rk_test_...`)
@@ -81,6 +83,25 @@ look like credentials are replaced with `[REDACTED]`:
 
 Bare high-entropy strings, git SHAs, and UUIDs are deliberately not redacted, to keep
 false positives out of normal tool output.
+
+### The `!` / `$` escape hatch
+
+User-initiated `!cmd` and `$code` run through `AgentSession.executeBash()` and the Python
+kernel, which by design skip tool interception entirely — neither `tool_call` nor
+`tool_result` fires. Deny rules therefore do **not** apply: `!cat .env` runs, and that is
+intentional, since it is your own shell escape and you are not the threat model. What the
+`context` pass guarantees is narrower: credential-shaped text in that command and its
+output is redacted before the model sees it.
+
+Coverage is a typed carrier list, not a blind walk over the message tree — user,
+developer, custom and tool-result text; `bashExecution` / `pythonExecution` command and
+output; `fileMention.files[].content` (`@path` auto-reads); and branch/compaction
+summaries. **Adding a message type means adding it to that list.** Two categories are
+excluded because rewriting them breaks the provider rather than because they are safe:
+signed blocks (assistant text bound to `textSignature`, thinking bound to
+`thinkingSignature`) and opaque server-validated replay data (`providerPayload`,
+`details`, `redactedThinking`). A secret the model itself echoed into its own reply or
+reasoning is therefore not scrubbed.
 
 When a call is blocked the model gets a specific reason instead of a silent failure. The
 reason names the matched rule, for example `Blocked by deny policy: "..." matches

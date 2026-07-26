@@ -60,10 +60,10 @@ omp plugin uninstall @rblaine95/omp-plugins
 
 ## Included extensions
 
-| Extension      | What it does                                                                                                                                        |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rules-guard`  | Enforces the Claude `permissions` allow/deny policy across every omp tool (read/write/edit/find/search/bash/eval/browser), not just `bash`.         |
-| `usage-status` | Color-coded row above the editor showing remaining usage with reset countdowns for every subscription `/usage` reports (Claude, Codex, Gemini, Grok, OpenCode, Cursor, …), so you don't have to run `/usage`. |
+| Extension      | What it does                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rules-guard`  | Enforces the Claude `permissions` allow/deny policy across every omp tool (read/write/edit/find/search/bash/eval/browser), not just `bash`. Also redacts secret-shaped text (API tokens, private keys, credential URLs) out of what the model sees — including output from `!` / `$` commands, which bypass tool interception entirely. Your terminal and the saved transcript still show the real values. |
+| `usage-status` | Color-coded row above the editor showing remaining usage with reset countdowns for every subscription `/usage` reports (Claude, Codex, Gemini, Grok, OpenCode, Cursor, …), so you don't have to run `/usage`.                                                                                                                                                                                              |
 
 ## Local development
 

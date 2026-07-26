@@ -22,6 +22,7 @@ import rulesGuard, {
   type Policy,
   parseRule,
   pathTokens,
+  redactMessages,
   redactText,
 } from "./index";
 
@@ -610,13 +611,14 @@ describe("claudeFiles (default settings file locations)", () => {
 });
 
 describe("rulesGuard wiring — registration & session_start", () => {
-  test("sets a label of the expected shape and registers three hooks", () => {
+  test("sets a label of the expected shape and registers four hooks", () => {
     const { pi, handlers, state } = makeMockPi();
     rulesGuard(pi);
     expect(state.label).toMatch(/^RULES guard \(\d+ deny \/ \d+ allow\)$/);
     expect(handlers.has("session_start")).toBe(true);
     expect(handlers.has("tool_call")).toBe(true);
     expect(handlers.has("tool_result")).toBe(true);
+    expect(handlers.has("context")).toBe(true);
   });
   test("session_start notifies only when a UI is present", async () => {
     const { pi, handlers } = makeMockPi();
@@ -751,5 +753,173 @@ describe("fuzzy — redaction idempotence & deny coverage", () => {
           .block,
       ).toBe(true);
     }
+  });
+});
+
+// ── context-pass redaction (the `!cat .env` bang hole) ────────────────────────
+// Bang output never reaches tool_call/tool_result: `AgentSession.executeBash()`
+// skips tool interception by design. It lands as a `bashExecution` message with
+// a top-level `output` string — no `content` array — so a content-only walk
+// misses it entirely. These fixtures mirror the real message shapes.
+const DSN = "postgres://u:p@h:5432/d";
+
+describe("redactMessages — operator-originated carriers", () => {
+  test("redacts bashExecution output and command (the reported bug)", () => {
+    const msgs = [
+      {
+        role: "bashExecution",
+        command: "cat .env",
+        output: `SECRET=x\nPOSTGRES=${DSN}\n`,
+        exitCode: 0,
+        cancelled: false,
+        truncated: false,
+        timestamp: 1,
+      },
+    ];
+    const out = must(redactMessages(msgs)) as typeof msgs;
+    expect(out[0]?.output).toBe("SECRET=x\nPOSTGRES=[REDACTED]\n");
+    expect(out[0]?.output).not.toContain("postgres://");
+    expect(msgs[0]?.output).toContain(DSN); // input untouched (copy-on-write)
+  });
+
+  test("redacts pythonExecution output/code and fileMention contents", () => {
+    const py = must(
+      redactMessages([
+        { role: "pythonExecution", code: `u="${DSN}"`, output: DSN },
+      ]),
+    ) as Array<{ code: string; output: string }>;
+    expect(py[0]?.output).toBe("[REDACTED]");
+    expect(py[0]?.code).toBe('u="[REDACTED]"');
+
+    const fm = must(
+      redactMessages([
+        { role: "fileMention", files: [{ path: ".env", content: DSN }] },
+      ]),
+    ) as Array<{ files: Array<{ path: string; content: string }> }>;
+    expect(fm[0]?.files[0]?.content).toBe("[REDACTED]");
+    expect(fm[0]?.files[0]?.path).toBe(".env");
+  });
+
+  test("redacts user string content, block content, and toolResult text", () => {
+    const out = must(
+      redactMessages([
+        { role: "user", content: `see ${DSN}` },
+        { role: "developer", content: [{ type: "text", text: DSN }] },
+        {
+          role: "toolResult",
+          content: [{ type: "image" }, { type: "text", text: DSN }],
+        },
+      ]),
+    ) as Array<{ content: string | Array<{ text?: string }> }>;
+    expect(out[0]?.content).toBe("see [REDACTED]");
+    const dev = must(out[1]).content as Array<{ text?: string }>;
+    expect(dev[0]?.text).toBe("[REDACTED]");
+    const tr = must(out[2]).content as Array<{ type?: string; text?: string }>;
+    expect(tr[0]?.type).toBe("image"); // non-text block passed through
+    expect(tr[1]?.text).toBe("[REDACTED]");
+  });
+});
+
+describe("redactMessages — compaction & branch summaries", () => {
+  test("redacts branch/compaction summaries including snapcompact blocks", () => {
+    const out = must(
+      redactMessages([
+        { role: "branchSummary", summary: DSN },
+        {
+          role: "compactionSummary",
+          summary: DSN,
+          shortSummary: DSN,
+          blocks: [{ type: "text", text: DSN }],
+        },
+      ]),
+    ) as Array<Record<string, unknown>>;
+    expect(out[0]?.["summary"]).toBe("[REDACTED]");
+    const cs = must(out[1]);
+    expect(cs["summary"]).toBe("[REDACTED]");
+    expect(cs["shortSummary"]).toBe("[REDACTED]");
+    const blocks = cs["blocks"] as Array<{ text?: string }>;
+    expect(blocks[0]?.text).toBe("[REDACTED]");
+  });
+});
+
+describe("redactMessages — replay-safety invariants", () => {
+  test("never touches assistant messages (signed text 400s on replay)", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: DSN, textSignature: "sig" },
+          { type: "thinking", thinking: DSN, thinkingSignature: "sig" },
+        ],
+      },
+    ];
+    expect(redactMessages(msgs)).toBeUndefined();
+  });
+
+  test("skips signed text blocks even outside assistant messages", () => {
+    const msgs = [
+      {
+        role: "user",
+        content: [{ type: "text", text: DSN, textSignature: "sig" }],
+      },
+    ];
+    expect(redactMessages(msgs)).toBeUndefined();
+  });
+
+  test("never descends into providerPayload or details", () => {
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "clean" }],
+        details: { nested: DSN },
+        providerPayload: { items: [{ encrypted_content: DSN }] },
+      },
+    ];
+    expect(redactMessages(msgs)).toBeUndefined();
+  });
+
+  test("returns undefined when clean, and shares untouched messages", () => {
+    const clean = { role: "user", content: "nothing here" };
+    const dirty = { role: "bashExecution", output: DSN };
+    expect(redactMessages([clean])).toBeUndefined();
+    const out = must(redactMessages([clean, dirty]));
+    expect(out[0]).toBe(clean); // identity preserved — no needless allocation
+    expect(out[1]).not.toBe(dirty);
+  });
+
+  test("tolerates malformed / unknown messages without throwing", () => {
+    expect(() =>
+      redactMessages([
+        null,
+        42,
+        {},
+        { role: 7 },
+        { role: "user" },
+        { role: "user", content: 5 },
+        { role: "fileMention", files: "nope" },
+        { role: "fileMention", files: [null, { content: 1 }] },
+        { role: "bashExecution" },
+        { role: "brandNewFutureType", output: DSN },
+      ]),
+    ).not.toThrow();
+  });
+});
+
+describe("rulesGuard wiring — context", () => {
+  test("handler redacts a bashExecution message; passes clean history", async () => {
+    const { pi, handlers } = makeMockPi();
+    rulesGuard(pi);
+    const onContext = must(handlers.get("context"));
+    const hit = (await onContext(
+      {
+        messages: [{ role: "bashExecution", command: "cat .env", output: DSN }],
+      },
+      {},
+    )) as { messages?: Array<{ output?: string }> } | undefined;
+    expect(hit?.messages?.[0]?.output).toBe("[REDACTED]");
+    expect(
+      await onContext({ messages: [{ role: "user", content: "hi" }] }, {}),
+    ).toBeUndefined();
+    expect(await onContext({ messages: "nope" }, {})).toBeUndefined();
   });
 });
