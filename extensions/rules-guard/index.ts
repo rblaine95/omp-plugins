@@ -5,8 +5,28 @@
  *   omp's `bashInterceptor` only inspects the `bash` tool, so RULES.md is trivially
  *   bypassed by calling `read`/`write`/`edit`/`find`/`search`/`eval` directly. This
  *   `tool_call` guard runs before EVERY tool, fail-closes on any attempt to touch a
- *   denied path, and enforces the denied bash command patterns too. A `tool_result`
- *   pass redacts secret-shaped output as defense in depth.
+ *   denied path, and enforces the denied bash command patterns too. Two output
+ *   passes redact secret-shaped text as defense in depth: `tool_result` (tool
+ *   output, at record time) and `context` (messages on their way to the LLM).
+ *
+ * Why the `context` pass exists:
+ *   the user execution surfaces bypass tool interception by design — `!cmd` runs
+ *   through `AgentSession.executeBash()` and `$code` through the Python kernel,
+ *   and neither fires `tool_call`/`tool_result`. So `!cat .env` put raw secrets
+ *   straight into the model's context. That output is not a `content` array
+ *   either; it lands as `{ role: "bashExecution", output }`. Blocking these
+ *   surfaces is deliberately NOT attempted: they are the user's own shell escape.
+ *   The pass redacts a TYPED carrier list — see `REDACT_CONTENT_ROLES` /
+ *   `REDACT_STRING_FIELDS` — covering operator-originated bytes:
+ *   user/developer/custom/hookMessage/tool-result text,
+ *   `bashExecution`/`pythonExecution` command+output,
+ *   `fileMention.files[].content` (`@path` auto-reads), and branch/compaction
+ *   summaries. Two categories are excluded because rewriting them BREAKS the
+ *   provider, not because they are safe: signed blocks (`assistant` text bound to
+ *   `textSignature`, thinking bound to `thinkingSignature`) and opaque
+ *   server-validated blobs (`providerPayload`, `details`, `redactedThinking`).
+ *   The list is typed, so ADDING A MESSAGE TYPE REQUIRES ADDING IT HERE — a new
+ *   carrier is not covered automatically.
  *
  * Policy source (read at load from ALL Claude settings files):
  *   - ~/.claude/settings.json           → permissions.deny + permissions.allow
@@ -582,6 +602,157 @@ export function redactText(text: string): string {
   return out;
 }
 
+/**
+ * Roles whose `content` is `string | (TextContent | ImageContent)[]`.
+ *
+ * `assistant` is absent BY DESIGN, not by omission: a `text` block carrying a
+ * `textSignature` is bound to its exact bytes, and rewriting the text while
+ * keeping the signature makes the provider 400 the replay (see
+ * `session-persistence.ts` — "never truncate, externalize, or descend"). Model
+ * output is also not what this pass defends against; it targets operator-
+ * originated bytes (files, command output, mentions).
+ *
+ * Null-prototype: `role` is untrusted, and on a plain object literal an
+ * `Object.prototype` key (`toString`, `constructor`, …) resolves to an
+ * inherited member, which reads as a table hit.
+ */
+const REDACT_CONTENT_ROLES: Record<string, true> = Object.assign(
+  Object.create(null),
+  {
+    user: true,
+    developer: true,
+    toolResult: true,
+    custom: true,
+    hookMessage: true,
+  },
+);
+
+/**
+ * Per-role plain-string fields to redact. All unsigned, all operator-facing.
+ * Null-prototype for the same reason as above, and more sharply: an inherited
+ * member is not nullish, so `?? []` cannot save the `for...of` from throwing.
+ */
+const REDACT_STRING_FIELDS: Record<string, readonly string[]> = Object.assign(
+  Object.create(null),
+  {
+    // `command`/`code` are redacted too: `!curl -H "Authorization: Bearer …"` is a
+    // real carrier, and neither field is signed.
+    bashExecution: ["command", "output"],
+    pythonExecution: ["code", "output"],
+    branchSummary: ["summary"],
+    compactionSummary: ["summary", "shortSummary"],
+  },
+);
+
+/**
+ * Copy-on-write redaction of operator-originated text in a message list.
+ * Returns a NEW array when anything changed, else `undefined` (the common path).
+ *
+ * Copy-on-write, not in-place: `ExtensionRunner.emitContext` deep-clones only on
+ * a best-effort basis and falls back to `[...messages]` when `structuredClone`
+ * throws, so in-place writes would corrupt the live session's persisted objects.
+ * Unchanged nodes are shared by reference — a clean history allocates nothing.
+ *
+ * Typed per field rather than a blind deep walk: opaque provider-replay blobs
+ * (`providerPayload`, `redactedThinking`) and untyped extension payloads
+ * (`details`) are server-validated atomic data and must never be descended into.
+ * Exported for tests.
+ */
+export function redactMessages<T>(messages: readonly T[]): T[] | undefined {
+  let copy: T[] | undefined;
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i] as T;
+    const next = redactMessage(msg) as T;
+    if (next === msg) continue;
+    copy ??= [...messages];
+    copy[i] = next;
+  }
+  return copy;
+}
+
+/** Redact one message; returns the original reference when nothing changed. */
+function redactMessage(msg: unknown): unknown {
+  if (msg === null || typeof msg !== "object") return msg;
+  const m = msg as Record<string, unknown>;
+  const role = m["role"];
+  if (typeof role !== "string" || role === "assistant") return msg;
+
+  let out: Record<string, unknown> | undefined;
+  const set = (key: string, value: unknown): void => {
+    out ??= { ...m };
+    out[key] = value;
+  };
+
+  if (REDACT_CONTENT_ROLES[role]) {
+    const content = m["content"];
+    const next =
+      typeof content === "string"
+        ? redactText(content)
+        : Array.isArray(content)
+          ? redactBlocks(content)
+          : content;
+    if (next !== content) set("content", next);
+  }
+
+  for (const field of REDACT_STRING_FIELDS[role] ?? []) {
+    const v = m[field];
+    if (typeof v !== "string") continue;
+    const next = redactText(v);
+    if (next !== v) set(field, next);
+  }
+
+  if (role === "compactionSummary") {
+    const blocks = m["blocks"];
+    if (Array.isArray(blocks)) {
+      const next = redactBlocks(blocks);
+      if (next !== blocks) set("blocks", next);
+    }
+  }
+
+  if (role === "fileMention") {
+    const files = m["files"];
+    if (Array.isArray(files)) {
+      let copy: unknown[] | undefined;
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file === null || typeof file !== "object") continue;
+        const rec = file as Record<string, unknown>;
+        const content = rec["content"];
+        if (typeof content !== "string") continue;
+        const next = redactText(content);
+        if (next === content) continue;
+        copy ??= [...files];
+        copy[i] = { ...rec, content: next };
+      }
+      if (copy) set("files", copy);
+    }
+  }
+
+  return out ?? msg;
+}
+
+/**
+ * Redact `text` blocks in a content array, sharing untouched entries. Signed
+ * blocks are skipped: the signature is bound to the exact bytes.
+ */
+function redactBlocks(blocks: readonly unknown[]): readonly unknown[] {
+  let copy: unknown[] | undefined;
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (block === null || typeof block !== "object") continue;
+    const rec = block as Record<string, unknown>;
+    if (rec["type"] !== "text" || typeof rec["textSignature"] === "string")
+      continue;
+    const text = rec["text"];
+    if (typeof text !== "string") continue;
+    const next = redactText(text);
+    if (next === text) continue;
+    copy ??= [...blocks];
+    copy[i] = { ...rec, text: next };
+  }
+  return copy ?? blocks;
+}
+
 // ── Compiled policy (read once at load) ────────────────────────────────────────
 
 const LOADED = loadPolicyEntries();
@@ -624,5 +795,15 @@ export default function rulesGuard(pi: ExtensionAPI): void {
       return { ...chunk, text: next };
     });
     if (changed) return { content };
+  });
+
+  // Last line before the model: redact the typed carrier list (see
+  // `redactMessages`) — notably `!`/`$` output, which reaches context without
+  // ever passing through `tool_call`/`tool_result`. Signed and opaque replay
+  // data is excluded. Transient: the on-disk transcript keeps the real bytes.
+  pi.on("context", async (event) => {
+    if (!Array.isArray(event.messages)) return;
+    const messages = redactMessages(event.messages);
+    if (messages) return { messages };
   });
 }
