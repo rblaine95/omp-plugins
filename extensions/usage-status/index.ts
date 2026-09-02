@@ -14,7 +14,7 @@
  * `/usage` and the built-in footer; unlike the built-in `usage` segment (active
  * provider only), this shows every reported subscription. A model-specific quota
  * (a limit with a `scope.tier`, such as Codex Spark or Claude's Opus-only weekly)
- * gets its own entry rather than sharing the account-wide row — see
+ * renders as its own entry instead of sharing the account-wide row. See
  * `selectMeters`.
  *
  * Rendering uses a component widget (`ui.setWidget(..., { placement: "aboveEditor" })`)
