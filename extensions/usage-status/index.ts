@@ -102,7 +102,9 @@ const PLAIN_STYLE: RowStyle = {
   showReset: true,
 };
 
-/** Friendly provider label: curated brand, else title-cased id. */
+/** Friendly display name for a provider id — curated brand, else title-cased.
+ *  Also used for meter tier ids ("spark" → "Spark", "fable" → "Fable"), so both
+ *  halves of a row label go through one display-name path. */
 export function providerLabel(provider: string): string {
   const known = KNOWN_LABELS[provider];
   if (known) return known;
@@ -164,26 +166,47 @@ export function formatReset(ms: number): string {
   return "<1m";
 }
 
-/** A single report's windows: one per window id, preferring an untiered limit,
- *  dropping windows with no resolvable remaining %, sorted shortest-first. */
-function selectWindows(limits: readonly UsageLimitLike[]): UsageLimitLike[] {
-  const byKey = new Map<string, UsageLimitLike>();
+interface Meter {
+  /** `scope.tier`, or "" for the base (untiered) meter. */
+  tier: string;
+  windows: UsageLimitLike[];
+}
+
+/** Split a report's limits into meters: the base (untiered) quota plus one per
+ *  `scope.tier`. A tier is a separate model-specific quota — Codex Spark's 5h/7d,
+ *  Claude's Opus-only ("fable") 7d — so it gets its own row entry rather than
+ *  competing for a shared per-window slot. Folding them together let Spark's 5h
+ *  masquerade as the account's session window on a Codex plan that reports no 5h
+ *  chat limit at all, and hid the Opus weekly behind the overall weekly. Grouping is
+ *  purely by reported shape, so a provider adding, renaming, or dropping a meter is
+ *  picked up on the next fetch with no per-provider table to maintain. Windows with
+ *  no resolvable remaining % are dropped, each window appears once per meter, and
+ *  windows are ordered shortest-first. */
+function selectMeters(limits: readonly UsageLimitLike[]): Meter[] {
+  const byTier = new Map<string, Map<string, UsageLimitLike>>();
   for (const limit of limits) {
     if (remainingPercent(limit) === undefined) continue;
+    const tier = limit.scope.tier ?? "";
+    let windows = byTier.get(tier);
+    if (!windows) {
+      windows = new Map();
+      byTier.set(tier, windows);
+    }
     const key =
       limit.scope.windowId ??
       limit.window?.id ??
       limit.window?.label ??
       windowToken(limit);
-    const existing = byKey.get(key);
-    if (!existing || (existing.scope.tier && !limit.scope.tier))
-      byKey.set(key, limit);
+    if (!windows.has(key)) windows.set(key, limit);
   }
-  return [...byKey.values()].sort(
-    (a, b) =>
-      (a.window?.durationMs ?? Number.POSITIVE_INFINITY) -
-      (b.window?.durationMs ?? Number.POSITIVE_INFINITY),
-  );
+  return [...byTier].map(([tier, windows]) => ({
+    tier,
+    windows: [...windows.values()].sort(
+      (a, b) =>
+        (a.window?.durationMs ?? Number.POSITIVE_INFINITY) -
+        (b.window?.durationMs ?? Number.POSITIVE_INFINITY),
+    ),
+  }));
 }
 
 /** Short account label from report metadata (email local-part, id, or project). */
@@ -274,23 +297,26 @@ export function formatUsageStatus(
     (r): r is UsageReportLike =>
       !!r && typeof r.provider === "string" && Array.isArray(r.limits),
   );
-  const rendered: { report: UsageReportLike; windows: UsageLimitLike[] }[] = [];
+  const rendered: { report: UsageReportLike; meters: Meter[] }[] = [];
   for (const report of valid) {
-    const windows = selectWindows(report.limits);
-    if (windows.length > 0) rendered.push({ report, windows });
+    const meters = selectMeters(report.limits);
+    if (meters.length > 0) rendered.push({ report, meters });
   }
   const counts = new Map<string, number>();
   for (const { report } of rendered)
     counts.set(report.provider, (counts.get(report.provider) ?? 0) + 1);
 
-  const entries = rendered.map(({ report, windows }) => {
-    const base = providerLabel(report.provider);
+  const entries = rendered.flatMap(({ report, meters }) => {
+    const brand = providerLabel(report.provider);
     // Disambiguate with an account label only when a provider has >1 rendered account.
-    const label =
+    const base =
       (counts.get(report.provider) ?? 0) > 1
-        ? `${base}:${accountLabel(report)}`
-        : base;
-    return { label, windows };
+        ? `${brand}:${accountLabel(report)}`
+        : brand;
+    return meters.map((meter) => ({
+      label: meter.tier ? `${base} ${providerLabel(meter.tier)}` : base,
+      windows: meter.windows,
+    }));
   });
   entries.sort((a, b) => a.label.localeCompare(b.label));
 
