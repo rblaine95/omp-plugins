@@ -74,4 +74,4 @@ what release-please parses on `master`.
 | Extension      | What it does                                                                                                                                               |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `rules-guard`  | Enforces the Claude `permissions` allow/deny policy across every omp tool. Read the `index.ts` docblock for the threat model before touching policy logic. |
-| `usage-status` | Color-coded `aboveEditor` widget row showing remaining usage + reset countdowns for every provider/account `authStorage.fetchUsageReports` returns (data-driven, like `/usage`), not a fixed provider list. |
+| `usage-status` | Color-coded `aboveEditor` widget row showing remaining usage + reset countdowns for every provider/account/meter `authStorage.fetchUsageReports` returns (data-driven, like `/usage`), not a fixed provider list. `selectMeters` groups a report's limits by `scope.tier`, so each meter (base, Codex Spark, Claude's Opus-only weekly) renders as its own entry. |

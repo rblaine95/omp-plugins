@@ -221,17 +221,30 @@ describe("formatUsageStatus styling", () => {
 });
 
 describe("formatUsageStatus window selection", () => {
-  test("prefers the untiered limit over a tiered duplicate", () => {
+  test("renders a tiered duplicate as its own meter", () => {
+    // Real `anthropic` shape: overall 5h + 7d, plus an Opus-only ("fable") 7d.
     const reports: UsageReportLike[] = [
       {
         provider: "anthropic",
         limits: [
-          limit({ windowId: "7d", tier: "fable", remainingFraction: 0.1 }),
-          limit({ windowId: "7d", remainingFraction: 0.75 }),
+          limit({ windowId: "5h", durationMs: 5 * HR, remainingFraction: 1 }),
+          limit({
+            windowId: "7d",
+            durationMs: 7 * DAY,
+            remainingFraction: 0.98,
+          }),
+          limit({
+            windowId: "7d",
+            tier: "fable",
+            durationMs: 7 * DAY,
+            remainingFraction: 0.97,
+          }),
         ],
       },
     ];
-    expect(formatUsageStatus(reports, NOW)).toBe("Claude 7d 75%");
+    expect(formatUsageStatus(reports, NOW)).toBe(
+      "Claude 5h 100% · 7d 98%  |  Claude Fable 7d 97%",
+    );
   });
 
   test("omits reset countdown when the window has already reset", () => {
@@ -255,6 +268,68 @@ describe("formatUsageStatus window selection", () => {
       { provider: "cursor", limits: [limit({ windowId: "monthly" })] },
     ];
     expect(formatUsageStatus(reports, NOW)).toBeUndefined();
+  });
+});
+
+describe("formatUsageStatus tiered meters", () => {
+  // Real `openai-codex` shape on a plan with no 5h chat limit: the untiered
+  // (chat) meter reports 7d only, while 5h exists solely under `tier: "spark"`.
+  const chat7d = limit({
+    windowId: "7d",
+    durationMs: 7 * DAY,
+    remainingFraction: 0.72,
+  });
+  const spark5h = limit({
+    windowId: "5h",
+    tier: "spark",
+    durationMs: 5 * HR,
+    remainingFraction: 0.95,
+  });
+  const spark7d = limit({
+    windowId: "7d",
+    tier: "spark",
+    durationMs: 7 * DAY,
+    remainingFraction: 0.92,
+  });
+  const extra7d = limit({
+    windowId: "7d",
+    tier: "extra",
+    durationMs: 7 * DAY,
+    remainingFraction: 0.4,
+  });
+  const codex = (...limits: UsageReportLike["limits"]): UsageReportLike[] => [
+    { provider: "openai-codex", limits },
+  ];
+
+  test("renders Spark as its own entry beside the base meter", () => {
+    expect(formatUsageStatus(codex(chat7d, spark5h, spark7d), NOW)).toBe(
+      "Codex 7d 72%  |  Codex Spark 5h 95% · 7d 92%",
+    );
+  });
+
+  test("renders every untiered window the plan reports", () => {
+    // Plus-plan shape: the chat meter itself carries 5h + 7d. Nothing keys off
+    // `metadata.planType`, so a reintroduced 5h chat window shows up on its own.
+    const chat5h = limit({
+      windowId: "5h",
+      durationMs: 5 * HR,
+      remainingFraction: 0.4,
+    });
+    expect(
+      formatUsageStatus(codex(chat5h, chat7d, spark5h, spark7d), NOW),
+    ).toBe("Codex 5h 40% · 7d 72%  |  Codex Spark 5h 95% · 7d 92%");
+  });
+
+  test("labels an unfamiliar tier from its reported id", () => {
+    expect(formatUsageStatus(codex(chat7d, extra7d), NOW)).toBe(
+      "Codex 7d 72%  |  Codex Extra 7d 40%",
+    );
+  });
+
+  test("renders a tier-only report with no base entry", () => {
+    expect(formatUsageStatus(codex(spark7d, spark5h, extra7d), NOW)).toBe(
+      "Codex Extra 7d 40%  |  Codex Spark 5h 95% · 7d 92%",
+    );
   });
 });
 
