@@ -6,13 +6,16 @@
  * renders the same numbers as a single colored row directly above the editor —
  * next to the status line — so they are always visible without running `/usage`.
  *
- * It is fully data-driven: every provider and account that
+ * It is fully data-driven: every provider, account, and meter that
  * `ctx.modelRegistry.authStorage.fetchUsageReports(...)` returns is rendered,
  * whatever it is (Claude, Codex, Gemini, Grok/xAI, OpenCode, Cursor, Copilot,
  * Kimi, Z.ai, …). Providers with no usage backend simply never appear in the
  * reports, so they are skipped. This is the exact call `AgentSession` makes for
  * `/usage` and the built-in footer; unlike the built-in `usage` segment (active
- * provider only), this shows every reported subscription.
+ * provider only), this shows every reported subscription. A model-specific quota
+ * (a limit with a `scope.tier`, such as Codex Spark or Claude's Opus-only weekly)
+ * gets its own entry rather than sharing the account-wide row — see
+ * `selectMeters`.
  *
  * Rendering uses a component widget (`ui.setWidget(..., { placement: "aboveEditor" })`)
  * rather than `ui.setStatus`, which feeds the hook-status block and renders apart
