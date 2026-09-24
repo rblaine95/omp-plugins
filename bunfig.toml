@@ -1,6 +1,28 @@
 [install]
 # 1 day in seconds
 minimumReleaseAge = 86400
+# Track new omp releases the day they ship; the dev-only types must match the host.
+# pi-coding-agent pins its @oh-my-pi/* siblings to its own version, so they ship together.
+minimumReleaseAgeExcludes = [
+  "@oh-my-pi/omp-stats",
+  "@oh-my-pi/omptype",
+  "@oh-my-pi/pi-agent-core",
+  "@oh-my-pi/pi-ai",
+  "@oh-my-pi/pi-catalog",
+  "@oh-my-pi/pi-coding-agent",
+  "@oh-my-pi/pi-mnemopi",
+  "@oh-my-pi/pi-natives",
+  "@oh-my-pi/pi-natives-darwin-arm64",
+  "@oh-my-pi/pi-natives-darwin-x64",
+  "@oh-my-pi/pi-natives-linux-arm64",
+  "@oh-my-pi/pi-natives-linux-x64",
+  "@oh-my-pi/pi-natives-win32-arm64",
+  "@oh-my-pi/pi-natives-win32-x64",
+  "@oh-my-pi/pi-tui",
+  "@oh-my-pi/pi-utils",
+  "@oh-my-pi/pi-wire",
+  "@oh-my-pi/snapcompact",
+]
 # When true, bun install will not update bun.lock. (Default false)
 # If package.json and the existing bun.lock are not in agreement, this will error.
 frozenLockfile = false
