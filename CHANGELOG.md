@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/rblaine95/omp-plugins/compare/v1.1.0...v1.1.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **usage-status:** use the omp 18.3.0 usage API ([#27](https://github.com/rblaine95/omp-plugins/issues/27)) ([348b88e](https://github.com/rblaine95/omp-plugins/commit/348b88ed938b8190123e93a1eaec0443768fe502))
+
 ## [1.1.0](https://github.com/rblaine95/omp-plugins/compare/v1.0.0...v1.1.0) (2026-09-02)
 
 
