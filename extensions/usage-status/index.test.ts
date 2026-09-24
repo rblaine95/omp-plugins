@@ -419,11 +419,13 @@ function uiCtx(o: UiCtxOptions): ExtensionContext {
     modelRegistry: {
       getProviderBaseUrl: (p: string) => `https://api/${p}`,
       authStorage: {
-        fetchUsageReports: (opts: {
-          baseUrlResolver: (p: string) => string | undefined;
-        }) => {
-          o.onFetch?.(opts);
-          return Promise.resolve(o.reports);
+        usage: {
+          reports: (opts: {
+            baseUrlResolver: (p: string) => string | undefined;
+          }) => {
+            o.onFetch?.(opts);
+            return Promise.resolve(o.reports);
+          },
         },
       },
     },
@@ -672,13 +674,15 @@ describe("usageStatus stale fetch", () => {
       modelRegistry: {
         getProviderBaseUrl: () => undefined,
         authStorage: {
-          fetchUsageReports: () => {
-            call += 1;
-            return call === 1
-              ? new Promise<UsageReportLike[]>((res) => {
-                  resolveFirst = () => res(first);
-                })
-              : Promise.resolve(second);
+          usage: {
+            reports: () => {
+              call += 1;
+              return call === 1
+                ? new Promise<UsageReportLike[]>((res) => {
+                    resolveFirst = () => res(first);
+                  })
+                : Promise.resolve(second);
+            },
           },
         },
       },

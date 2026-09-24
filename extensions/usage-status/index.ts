@@ -7,7 +7,7 @@
  * next to the status line — so they are always visible without running `/usage`.
  *
  * It is fully data-driven: every provider, account, and meter that
- * `ctx.modelRegistry.authStorage.fetchUsageReports(...)` returns is rendered,
+ * `ctx.modelRegistry.authStorage.usage.reports(...)` returns is rendered,
  * whatever it is (Claude, Codex, Gemini, Grok/xAI, OpenCode, Cursor, Copilot,
  * Kimi, Z.ai, …). Providers with no usage backend simply never appear in the
  * reports, so they are skipped. This is the exact call `AgentSession` makes for
@@ -422,17 +422,13 @@ function clearWidget(state: UsageState): void {
 
 async function fetchReports(state: UsageState): Promise<void> {
   const registry = state.ctx?.modelRegistry;
-  const authStorage = registry?.authStorage;
-  if (
-    !registry ||
-    state.inFlight ||
-    typeof authStorage?.fetchUsageReports !== "function"
-  )
+  const usage = registry?.authStorage?.usage;
+  if (!registry || state.inFlight || typeof usage?.reports !== "function")
     return;
   const generation = state.generation;
   state.inFlight = true;
   try {
-    const result = await authStorage.fetchUsageReports({
+    const result = await usage.reports({
       baseUrlResolver: (provider) => registry.getProviderBaseUrl(provider),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
