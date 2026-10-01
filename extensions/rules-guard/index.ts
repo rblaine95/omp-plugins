@@ -57,6 +57,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
+
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
 // ── Opinionated default deny-list ────────────────────────────────────────────
@@ -87,10 +88,7 @@ export const EMBEDDED_DENY: string[] = [
 // Only path-bearing `Tool(pattern)` rules belong here; a bare tool allow (e.g.
 // "Read") must NEVER widen a path/bash deny. `.env.example` / `.env.default` are
 // safe templates, so they win over the broad `Read(**/.env*)` deny above.
-export const EMBEDDED_ALLOW: string[] = [
-  "Read(**/.env.example)",
-  "Read(**/.env.default)",
-];
+export const EMBEDDED_ALLOW: string[] = ["Read(**/.env.example)", "Read(**/.env.default)"];
 
 // Default Claude settings files that contribute policy rules: the user + org
 // files under `~/.claude`, plus the project-scoped `.claude/settings.json`
@@ -98,10 +96,7 @@ export const EMBEDDED_ALLOW: string[] = [
 // under `cwd`. Order is irrelevant to the final policy (precedence is by
 // specificity, not position); a missing file is skipped. Pure + injectable for
 // tests, matching `compileGlob`/`globSpecificity`.
-export function claudeFiles(
-  home: string = os.homedir(),
-  cwd: string = process.cwd(),
-): string[] {
+export function claudeFiles(home: string = os.homedir(), cwd: string = process.cwd()): string[] {
   return [
     nodePath.join(home, ".claude", "settings.json"),
     nodePath.join(home, ".claude", "remote-settings.json"),
@@ -191,10 +186,8 @@ export interface Policy {
   bash: BashRule[];
 }
 
-export function parseRule(
-  entry: string,
-): { tool: string; pattern: string } | null {
-  const m = /^([A-Za-z_]+)\((.*)\)$/.exec(entry.trim());
+export function parseRule(entry: string): { tool: string; pattern: string } | null {
+  const m = /^([A-Za-z_]+)\((.*)\)$/u.exec(entry.trim());
   if (!m) return null;
   const [, tool, pattern] = m;
   if (tool === undefined || pattern === undefined) return null;
@@ -235,7 +228,7 @@ export function compileGlob(glob: string, home: string = os.homedir()): RegExp {
       re += "[^/]*";
     } else if (c === "?") {
       re += "[^/]";
-    } else if (/[.\\^$+(){}[\]|]/.test(c)) {
+    } else if (/[.\\^$+(){}[\]|]/u.test(c)) {
       re += `\\${c}`;
     } else {
       re += c;
@@ -244,7 +237,7 @@ export function compileGlob(glob: string, home: string = os.homedir()): RegExp {
 
   const prefix = floating ? "(?:.*/)?" : "";
   const suffix = trailingDir ? "(?:/.*)?" : "";
-  return new RegExp(`^${prefix}${re}${suffix}$`);
+  return new RegExp(`^${prefix}${re}${suffix}$`, "u");
 }
 
 /**
@@ -252,10 +245,7 @@ export function compileGlob(glob: string, home: string = os.homedir()): RegExp {
  * expansion (`*`, `**`, `?` count as zero). Higher = more specific. Lets a
  * precise rule win over a broad one, on either the allow or the deny side.
  */
-export function globSpecificity(
-  glob: string,
-  home: string = os.homedir(),
-): number {
+export function globSpecificity(glob: string, home: string = os.homedir()): number {
   let g = glob.trim();
   if (g === "~") g = home;
   else if (g.startsWith("~/")) g = home + g.slice(1);
@@ -279,12 +269,12 @@ export function globSpecificity(
  * `git push --force *` does NOT match the safe `git push --force-with-lease`.
  */
 export function bashMatcher(pattern: string): RegExp {
-  const head = pattern.trim().replace(/\s*\*+\s*$/, "");
+  const head = pattern.trim().replace(/\s*\*+\s*$/u, "");
   const esc = head
-    .replace(/[.\\+?^${}()|[\]]/g, "\\$&")
-    .replace(/\s+/g, "\\s+")
-    .replace(/\*/g, "[^\\s]*");
-  return new RegExp(`^${esc}(?![-\\w])`);
+    .replaceAll(/[.\\+?^${}()|[\]]/gu, "\\$&")
+    .replaceAll(/\s+/gu, "\\s+")
+    .replaceAll("*", "[^\\s]*");
+  return new RegExp(`^${esc}(?![-\\w])`, "u");
 }
 
 export function buildPolicy(
@@ -344,10 +334,8 @@ export function loadPolicyEntries(files: string[] = CLAUDE_FILES): {
       const parsed = JSON.parse(fs.readFileSync(f, "utf8"));
       const d = parsed?.permissions?.deny;
       const a = parsed?.permissions?.allow;
-      if (Array.isArray(d))
-        for (const x of d) if (typeof x === "string") deny.push(x);
-      if (Array.isArray(a))
-        for (const x of a) if (typeof x === "string") allow.push(x);
+      if (Array.isArray(d)) deny.push(...d.filter((x): x is string => typeof x === "string"));
+      if (Array.isArray(a)) allow.push(...a.filter((x): x is string => typeof x === "string"));
     } catch {
       // missing or invalid file → rely on the opinionated defaults + the other file
     }
@@ -364,28 +352,18 @@ export function loadPolicyEntries(files: string[] = CLAUDE_FILES): {
  */
 export function candidateAbsPaths(raw: string, cwd: string): string[] {
   let p = (raw ?? "").trim();
-  if (!p || /^[a-z][\w+.-]*:\/\//i.test(p) || /^(?:data|mailto):/i.test(p))
-    return [];
-  p = p.replace(/(:(?:\d[\w,+-]*|raw|conflicts))+$/i, "");
+  if (!p || /^[a-z][\w+.-]*:\/\//iu.test(p) || /^(?:data|mailto):/iu.test(p)) return [];
+  p = p.replace(/(:(?:\d[\w,+-]*|raw|conflicts))+$/iu, "");
   const base = cwd || process.cwd();
   const home = os.homedir();
-  const out = new Set<string>();
-  out.add(
-    nodePath.resolve(
-      base,
-      p.startsWith("~") ? nodePath.join(home, p.slice(1)) : p,
-    ),
-  );
+  const out = new Set<string>([
+    nodePath.resolve(base, p.startsWith("~") ? nodePath.join(home, p.slice(1)) : p),
+  ]);
   if (p.includes(":")) {
     for (const seg of p.split(":")) {
       const s = seg.trim();
       if (s)
-        out.add(
-          nodePath.resolve(
-            base,
-            s.startsWith("~") ? nodePath.join(home, s.slice(1)) : s,
-          ),
-        );
+        out.add(nodePath.resolve(base, s.startsWith("~") ? nodePath.join(home, s.slice(1)) : s));
     }
   }
   return [...out];
@@ -400,18 +378,17 @@ export function candidateAbsPaths(raw: string, cwd: string): string[] {
  */
 export function pathTokens(text: string): string[] {
   const out: string[] = [];
-  for (let t of text.split(/[\s,;|&()<>'"`=]+/)) {
-    t = t.replace(/^[([{]+|[)\]};,]+$/g, "");
+  for (let t of text.split(/[\s,;|&()<>'"`=]+/u)) {
+    t = t.replaceAll(/^[([{]+|[)\]};,]+$/gu, "");
     if (!t) continue;
-    if (t.includes("/") || t.startsWith("~") || /^\.[^./]/.test(t)) out.push(t);
+    if (t.includes("/") || t.startsWith("~") || /^\.[^./]/u.test(t)) out.push(t);
   }
   return out;
 }
 
 function asArr(v: unknown): string[] {
   if (typeof v === "string") return [v];
-  if (Array.isArray(v))
-    return v.filter((x): x is string => typeof x === "string");
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
   return [];
 }
 
@@ -420,17 +397,14 @@ function editHeaderPaths(input: Record<string, unknown>): string[] {
   const body = input["input"] ?? input["_input"];
   if (typeof body !== "string") return [];
   const out: string[] = [];
-  for (const m of body.matchAll(/\[([^\]\n#]+)#[0-9A-Fa-f]{3,8}\]/g)) {
+  for (const m of body.matchAll(/\[([^\]\n#]+)#[0-9A-Fa-f]{3,8}\]/gu)) {
     const p = m[1];
     if (p !== undefined) out.push(p.trim());
   }
   return out;
 }
 
-function fieldValues(
-  input: Record<string, unknown>,
-  fields: Record<string, true>,
-): string[] {
+function fieldValues(input: Record<string, unknown>, fields: Record<string, true>): string[] {
   const out: string[] = [];
   for (const key of Object.keys(input)) {
     if (!fields[key]) continue;
@@ -443,8 +417,8 @@ function fileMsg(target: string, src: string): string {
   return `Blocked by deny policy: "${target}" matches \`${src}\`. This is a protected secret/credential path — ask the User to fetch it; do not read, write, or reference it.`;
 }
 
-const SHELL_PREFIX = /^(?:sudo|command|builtin|exec|time|nice|nohup)$/;
-const ENV_ASSIGN = /^[A-Za-z_]\w*=/;
+const SHELL_PREFIX = /^(?:sudo|command|builtin|exec|time|nice|nohup)$/u;
+const ENV_ASSIGN = /^[A-Za-z_]\w*=/u;
 
 /** Split shell text into simple commands, each as its words with quotes and
  *  escapes removed. Only an unquoted `;`, `&`, `|` or newline ends a command, so
@@ -456,7 +430,8 @@ export function shellCommands(text: string): string[][] {
   const out: string[][] = [];
   const nested: string[] = [];
   let words: string[] = [];
-  let word: string | undefined; // undefined = between words
+  // undefined = between words
+  let word: string | undefined;
   let quote = "";
   const add = (s: string): void => {
     word = (word ?? "") + s;
@@ -464,14 +439,12 @@ export function shellCommands(text: string): string[][] {
   const endWord = (): void => {
     if (word === undefined) return;
     words.push(word);
-    if (/[\s;&|]/.test(word)) nested.push(word);
+    if (/[\s;&|]/u.test(word)) nested.push(word);
     word = undefined;
   };
   const endCommand = (): void => {
     endWord();
-    const start = words.findIndex(
-      (w) => !SHELL_PREFIX.test(w) && !ENV_ASSIGN.test(w),
-    );
+    const start = words.findIndex((w) => !SHELL_PREFIX.test(w) && !ENV_ASSIGN.test(w));
     if (start >= 0) out.push(words.slice(start));
     words = [];
   };
@@ -480,7 +453,7 @@ export function shellCommands(text: string): string[][] {
     if (quote === "'") {
       if (c === "'") quote = "";
       else add(c);
-    } else if (c === "\\" && (!quote || /["\\$`]/.test(text.charAt(i + 1)))) {
+    } else if (c === "\\" && (!quote || /["\\$`]/u.test(text.charAt(i + 1)))) {
       add(text.charAt(++i));
     } else if (quote === '"') {
       if (c === '"') quote = "";
@@ -488,8 +461,8 @@ export function shellCommands(text: string): string[][] {
     } else if (c === "'" || c === '"') {
       quote = c;
       add("");
-    } else if (/[;&|\n]/.test(c)) endCommand();
-    else if (/\s/.test(c)) endWord();
+    } else if (/[;&|\n]/u.test(c)) endCommand();
+    else if (/\s/u.test(c)) endWord();
     else add(c);
   }
   endCommand();
@@ -506,7 +479,7 @@ export function isRecursiveRm([cmd = "", ...args]: string[]): boolean {
     if (a === "--") break;
     if (a.startsWith("--")) {
       if (a.length > 2 && "recursive".startsWith(a.slice(2))) return true;
-    } else if (a.startsWith("-") && /[rR]/.test(a)) return true;
+    } else if (a.startsWith("-") && /[rR]/u.test(a)) return true;
   }
   return false;
 }
@@ -535,22 +508,17 @@ export function fileVerdict(
 ): FileGlob | undefined {
   let topDeny: FileGlob | undefined;
   for (const c of candidates)
-    for (const g of denyGlobs)
-      if (g.re.test(c) && (!topDeny || g.spec > topDeny.spec)) topDeny = g;
+    for (const g of denyGlobs) if (g.re.test(c) && (!topDeny || g.spec > topDeny.spec)) topDeny = g;
   if (!topDeny) return undefined;
   let topAllow = -1;
   for (const c of candidates)
-    for (const g of allowGlobs)
-      if (g.re.test(c) && g.spec > topAllow) topAllow = g.spec;
+    for (const g of allowGlobs) if (g.re.test(c) && g.spec > topAllow) topAllow = g.spec;
   return topAllow > topDeny.spec ? undefined : topDeny;
 }
 
 // ── Decision ──────────────────────────────────────────────────────────────────
 
-export interface Decision {
-  block: boolean;
-  reason?: string;
-}
+export type Decision = { block: false; reason?: undefined } | { block: true; reason: string };
 
 /** Pure block/allow decision for one tool call. Detection is field-driven so it
  *  covers every tool (read/write/edit/find/grep/python/eval/browser/...) regardless
@@ -569,14 +537,9 @@ export function decide(
   // the SAME class. Read-class applies to every tool (any tool can read bytes);
   // write-class applies additionally to write tools, unknown tools, and
   // shell/code execution (which can write).
-  const blocked = (
-    candidates: string[],
-    includeWrite: boolean,
-  ): FileGlob | undefined =>
+  const blocked = (candidates: string[], includeWrite: boolean): FileGlob | undefined =>
     fileVerdict(candidates, policy.readDeny, policy.readAllow) ??
-    (includeWrite
-      ? fileVerdict(candidates, policy.writeDeny, policy.writeAllow)
-      : undefined);
+    (includeWrite ? fileVerdict(candidates, policy.writeDeny, policy.writeAllow) : undefined);
 
   // Target paths embedded in an edit/patch body (`[PATH#TAG]`) — write context.
   for (const raw of editHeaderPaths(inp)) {
@@ -618,40 +581,60 @@ export function decide(
 // ── Output redaction (defense in depth) ───────────────────────────────────────
 
 const SECRET_OUTPUT: RegExp[] = [
-  /\bsk-ant-[A-Za-z0-9_-]{16,}/g, // Anthropic (incl. sk-ant-api...)
-  /\b(?:sk|pk)-[A-Za-z0-9_-]{16,}/g, // OpenAI (incl. sk-proj-...)
-  /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g, // Stripe secret / restricted keys
-  /\bAKIA[0-9A-Z]{16}\b/g, // AWS access key id
+  // Anthropic (incl. sk-ant-api...)
+  /\bsk-ant-[A-Za-z0-9_-]{16,}/gu,
+  // OpenAI (incl. sk-proj-...)
+  /\b(?:sk|pk)-[A-Za-z0-9_-]{16,}/gu,
+  // Stripe secret / restricted keys
+  /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/gu,
+  // AWS access key id
+  /\bAKIA[0-9A-Z]{16}\b/gu,
   // AWS secret access key: bare 40-char base64 is indistinguishable from a git SHA,
   // so match only in context (an aws-secret-ish label followed by `=`/`:`).
-  /\baws_?secret_?access_?key[ \t]*[:=][ \t]*["']?[A-Za-z0-9/+]{40}/gi,
+  /\baws_?secret_?access_?key[ \t]*[:=][ \t]*["']?[A-Za-z0-9/+]{40}/giu,
   // GitHub token — PAT ghp_, OAuth/CLI gho_, user-to-server ghu_, refresh ghr_.
-  /\bgh[opru]_[A-Za-z0-9]{36,}/g,
+  /\bgh[opru]_[A-Za-z0-9]{36,}/gu,
   // GitHub server-to-server / installation token ghs_ — covers both the classic
   // 36-char form and the stateless ghs_APPID_JWT form (~520 chars, dot- and
   // underscore-separated), per GitHub's recommended `ghs_[A-Za-z0-9._-]{36,}`.
-  /\bghs_[A-Za-z0-9._-]{36,}/g,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}/g, // GitHub PAT (fine-grained)
-  /\bglpat-[A-Za-z0-9_-]{20,}/g, // GitLab PAT
-  /\b(?:xox[baprs]|xapp)-[A-Za-z0-9-]{10,}/g, // Slack tokens (bot/user/app/...)
-  /\bhooks\.slack\.com\/services\/[\w-]+\/[\w-]+\/[\w-]+/g, // Slack incoming webhook
-  /\bAIza[0-9A-Za-z_-]{35}\b/g, // Google API key
-  /\bya29\.[0-9A-Za-z_-]{20,}/g, // Google OAuth access token
-  /\bnpm_[A-Za-z0-9]{36}\b/g, // npm access token
-  /\bpypi-[A-Za-z0-9_-]{16,}/g, // PyPI API token
-  /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g, // SendGrid API key
-  /\beyJ[A-Za-z0-9_-]{6,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g, // JWT (header.payload.signature)
-  /\bdop_v1_[a-f0-9]{64}\b/g, // DigitalOcean PAT
-  /\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b/g, // Shopify access token
-  /\bSK[0-9a-fA-F]{32}\b/g, // Twilio API key SID
-  /\b[MNO][\w-]{23}\.[\w-]{6}\.[\w-]{27,}/g, // Discord bot token
-  /\b[0-9]+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com\b/g, // Google OAuth client id
+  /\bghs_[A-Za-z0-9._-]{36,}/gu,
+  // GitHub PAT (fine-grained)
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/gu,
+  // GitLab PAT
+  /\bglpat-[A-Za-z0-9_-]{20,}/gu,
+  // Slack tokens (bot/user/app/...)
+  /\b(?:xox[baprs]|xapp)-[A-Za-z0-9-]{10,}/gu,
+  // Slack incoming webhook
+  /\bhooks\.slack\.com\/services\/[\w-]+\/[\w-]+\/[\w-]+/gu,
+  // Google API key
+  /\bAIza[0-9A-Za-z_-]{35}\b/gu,
+  // Google OAuth access token
+  /\bya29\.[0-9A-Za-z_-]{20,}/gu,
+  // npm access token
+  /\bnpm_[A-Za-z0-9]{36}\b/gu,
+  // PyPI API token
+  /\bpypi-[A-Za-z0-9_-]{16,}/gu,
+  // SendGrid API key
+  /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/gu,
+  // JWT (header.payload.signature)
+  /\beyJ[A-Za-z0-9_-]{6,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/gu,
+  // DigitalOcean PAT
+  /\bdop_v1_[a-f0-9]{64}\b/gu,
+  // Shopify access token
+  /\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b/gu,
+  // Twilio API key SID
+  /\bSK[0-9a-fA-F]{32}\b/gu,
+  // Discord bot token
+  /\b[MNO][\w-]{23}\.[\w-]{6}\.[\w-]{27,}/gu,
+  // Google OAuth client id
+  /\b[0-9]+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com\b/gu,
   // Credentials embedded in a connection URL (scheme://[user]:password@host/...). The
   // password is required (`+`), so `https://user@host` and bare URLs are left alone.
   // Match runs through the path/query (stopping at whitespace/quote/bracket) so a
   // credentialed DSN's host, port, db name, and query secrets are all redacted.
-  /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]*:[^\s@/]+@[^\s'"`<>)]+/gi,
-  /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----/g, // PEM private key
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]*:[^\s@/]+@[^\s'"`<>)]+/giu,
+  // PEM private key
+  /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----/gu,
 ];
 
 /** Redact secret-shaped substrings from tool output text. Exported for tests. */
@@ -675,33 +658,27 @@ export function redactText(text: string): string {
  * `Object.prototype` key (`toString`, `constructor`, …) resolves to an
  * inherited member, which reads as a table hit.
  */
-const REDACT_CONTENT_ROLES: Record<string, true> = Object.assign(
-  Object.create(null),
-  {
-    user: true,
-    developer: true,
-    toolResult: true,
-    custom: true,
-    hookMessage: true,
-  },
-);
+const REDACT_CONTENT_ROLES: Record<string, true> = Object.assign(Object.create(null), {
+  user: true,
+  developer: true,
+  toolResult: true,
+  custom: true,
+  hookMessage: true,
+});
 
 /**
  * Per-role plain-string fields to redact. All unsigned, all operator-facing.
  * Null-prototype for the same reason as above, and more sharply: an inherited
  * member is not nullish, so `?? []` cannot save the `for...of` from throwing.
  */
-const REDACT_STRING_FIELDS: Record<string, readonly string[]> = Object.assign(
-  Object.create(null),
-  {
-    // `command`/`code` are redacted too: `!curl -H "Authorization: Bearer …"` is a
-    // real carrier, and neither field is signed.
-    bashExecution: ["command", "output"],
-    pythonExecution: ["code", "output"],
-    branchSummary: ["summary"],
-    compactionSummary: ["summary", "shortSummary"],
-  },
-);
+const REDACT_STRING_FIELDS: Record<string, readonly string[]> = Object.assign(Object.create(null), {
+  // `command`/`code` are redacted too: `!curl -H "Authorization: Bearer …"` is a
+  // real carrier, and neither field is signed.
+  bashExecution: ["command", "output"],
+  pythonExecution: ["code", "output"],
+  branchSummary: ["summary"],
+  compactionSummary: ["summary", "shortSummary"],
+});
 
 /**
  * Copy-on-write redaction of operator-originated text in a message list.
@@ -800,8 +777,7 @@ function redactBlocks(blocks: readonly unknown[]): readonly unknown[] {
     const block = blocks[i];
     if (block === null || typeof block !== "object") continue;
     const rec = block as Record<string, unknown>;
-    if (rec["type"] !== "text" || typeof rec["textSignature"] === "string")
-      continue;
+    if (rec["type"] !== "text" || typeof rec["textSignature"] === "string") continue;
     const text = rec["text"];
     if (typeof text !== "string") continue;
     const next = redactText(text);
@@ -820,12 +796,11 @@ export const POLICY: Policy = buildPolicy(LOADED.deny, LOADED.allow);
 // ── Extension wiring ────────────────────────────────────────────────────────────
 
 export default function rulesGuard(pi: ExtensionAPI): void {
-  const denyCount =
-    POLICY.readDeny.length + POLICY.writeDeny.length + POLICY.bash.length;
+  const denyCount = POLICY.readDeny.length + POLICY.writeDeny.length + POLICY.bash.length;
   const allowCount = POLICY.readAllow.length + POLICY.writeAllow.length;
   pi.setLabel(`RULES guard (${denyCount} deny / ${allowCount} allow)`);
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", (_event, ctx) => {
     if (ctx?.hasUI) {
       ctx.ui.notify(
         `RULES guard active — ${denyCount} deny / ${allowCount} allow rules across all tools.`,
@@ -834,16 +809,16 @@ export default function rulesGuard(pi: ExtensionAPI): void {
     }
   });
 
-  pi.on("tool_call", async (event, ctx) => {
+  pi.on("tool_call", (event, ctx) => {
     const verdict = decide(
       event.toolName,
       (event.input ?? {}) as Record<string, unknown>,
       ctx?.cwd ?? process.cwd(),
     );
-    if (verdict.block) return { block: true, reason: verdict.reason };
+    if (verdict.block) return verdict;
   });
 
-  pi.on("tool_result", async (event) => {
+  pi.on("tool_result", (event) => {
     if (event.isError || !Array.isArray(event.content)) return;
     let changed = false;
     const content = event.content.map((chunk) => {
@@ -860,7 +835,7 @@ export default function rulesGuard(pi: ExtensionAPI): void {
   // `redactMessages`) — notably `!`/`$` output, which reaches context without
   // ever passing through `tool_call`/`tool_result`. Signed and opaque replay
   // data is excluded. Transient: the on-disk transcript keeps the real bytes.
-  pi.on("context", async (event) => {
+  pi.on("context", (event) => {
     if (!Array.isArray(event.messages)) return;
     const messages = redactMessages(event.messages);
     if (messages) return { messages };

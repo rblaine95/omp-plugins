@@ -6,7 +6,9 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
+
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+
 import rulesGuard, {
   bashMatcher,
   buildPolicy,
@@ -40,7 +42,7 @@ const writeBlocked = (path: string, pol: Policy, cwd = "/work") =>
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
-    a = (a + 0x6d2b79f5) | 0;
+    a = (a + 0x6d2b79f5) >>> 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
@@ -49,13 +51,12 @@ function mulberry32(seed: number): () => number {
 
 function randStr(rng: () => number, len: number, alphabet: string): string {
   let s = "";
-  for (let i = 0; i < len; i++)
-    s += alphabet.charAt(Math.floor(rng() * alphabet.length));
+  for (let i = 0; i < len; i++) s += alphabet.charAt(Math.floor(rng() * alphabet.length));
   return s;
 }
 
 function must<T>(v: T | undefined | null): T {
-  if (v == null) throw new Error("expected a value");
+  if (v === null || v === undefined) throw new Error("expected a value");
   return v;
 }
 
@@ -69,7 +70,7 @@ function inTempDir(fn: (dir: string) => void): void {
   }
 }
 
-type AnyHandler = (event: unknown, ctx: unknown) => unknown;
+type AnyHandler = (event: unknown, ctx?: unknown) => unknown;
 
 /** Minimal ExtensionAPI stand-in that captures registered handlers + label. */
 function makeMockPi(): {
@@ -92,15 +93,19 @@ function makeMockPi(): {
 
 describe("globSpecificity", () => {
   test("wildcards count as zero, literals as one", () => {
-    expect(globSpecificity("**/.env*", HOME)).toBe(5); // /.env
-    expect(globSpecificity("**/.env.example", HOME)).toBe(13); // /.env.example
-    expect(globSpecificity("/foo/bar/**", HOME)).toBe(9); // /foo/bar/
+    // Literal part: "/.env".
+    expect(globSpecificity("**/.env*", HOME)).toBe(5);
+    // Literal part: "/.env.example".
+    expect(globSpecificity("**/.env.example", HOME)).toBe(13);
+    // Literal part: "/foo/bar/".
+    expect(globSpecificity("/foo/bar/**", HOME)).toBe(9);
     expect(globSpecificity("/foo/bar/baz", HOME)).toBe(12);
     expect(globSpecificity("**", HOME)).toBe(0);
-    expect(globSpecificity("a?c", HOME)).toBe(2); // ? is a wildcard
+    // `?` is a wildcard.
+    expect(globSpecificity("a?c", HOME)).toBe(2);
   });
   test("~ expands before counting", () => {
-    expect(globSpecificity("~", HOME)).toBe("/home/test".length); // 10
+    expect(globSpecificity("~", HOME)).toBe("/home/test".length);
   });
 });
 
@@ -130,20 +135,13 @@ describe(".env goal — allow templates, deny the rest", () => {
   test("shell reference to a write-denied template is conservatively blocked", () => {
     // The token scan can't tell `cat` from `echo >`, so a Write(**/.env*) deny now
     // blocks .env.example in shell context; the read tool still permits it (see above).
-    expect(
-      decide("bash", { command: "cat .env.example" }, "/work", pol).block,
-    ).toBe(true);
+    expect(decide("bash", { command: "cat .env.example" }, "/work", pol).block).toBe(true);
   });
   test("shell read of a real .env is still blocked", () => {
-    expect(
-      decide("bash", { command: "cat .env.production" }, "/work", pol).block,
-    ).toBe(true);
+    expect(decide("bash", { command: "cat .env.production" }, "/work", pol).block).toBe(true);
   });
   test("shell write to a denied .env is still caught via read-deny", () => {
-    expect(
-      decide("bash", { command: "echo x > .env.production" }, "/work", pol)
-        .block,
-    ).toBe(true);
+    expect(decide("bash", { command: "echo x > .env.production" }, "/work", pol).block).toBe(true);
   });
 });
 
@@ -166,10 +164,7 @@ describe("ties resolve to deny (secure default)", () => {
 });
 
 describe("bare or empty allow never widens a deny", () => {
-  const pol = buildPolicy(
-    ["Read(**/secrets/**)"],
-    ["Read", "Read()", "Glob", "Bash(rm -rf *)"],
-  );
+  const pol = buildPolicy(["Read(**/secrets/**)"], ["Read", "Read()", "Glob", "Bash(rm -rf *)"]);
   test("no path-allow globs are produced from bare/empty/bash entries", () => {
     expect(pol.readAllow).toHaveLength(0);
     expect(pol.writeAllow).toHaveLength(0);
@@ -186,10 +181,7 @@ describe("bash deny is final — allow cannot override", () => {
   );
   test("matching command is blocked despite a more-specific bash allow", () => {
     expect(pol.bash).toHaveLength(1);
-    expect(
-      decide("bash", { command: "git push --force origin x" }, "/work", pol)
-        .block,
-    ).toBe(true);
+    expect(decide("bash", { command: "git push --force origin x" }, "/work", pol).block).toBe(true);
   });
 });
 
@@ -216,9 +208,7 @@ describe("live POLICY (built from the real settings files at load)", () => {
 describe("fileVerdict (direct)", () => {
   const pol = buildPolicy(["Read(/foo/bar/**)"], ["Read(/foo/bar/baz)"]);
   test("returns undefined when a stricter allow matches", () => {
-    expect(
-      fileVerdict(["/foo/bar/baz"], pol.readDeny, pol.readAllow),
-    ).toBeUndefined();
+    expect(fileVerdict(["/foo/bar/baz"], pol.readDeny, pol.readAllow)).toBeUndefined();
   });
   test("returns the deny glob (with src) otherwise", () => {
     const hit = fileVerdict(["/foo/bar/x"], pol.readDeny, pol.readAllow);
@@ -242,9 +232,7 @@ describe("compileGlob (glob semantics)", () => {
   });
   test("~ expands to home; trailing /** matches the dir itself", () => {
     expect(compileGlob("~/.ssh/**", HOME).test("/home/test/.ssh")).toBe(true);
-    expect(compileGlob("~/.ssh/**", HOME).test("/home/test/.ssh/id")).toBe(
-      true,
-    );
+    expect(compileGlob("~/.ssh/**", HOME).test("/home/test/.ssh/id")).toBe(true);
     expect(compileGlob("~", HOME).test("/home/test")).toBe(true);
   });
   test("regex metacharacters are matched literally (adversarial)", () => {
@@ -263,9 +251,7 @@ describe("bashMatcher (command head, boundary-safe)", () => {
   });
   test("literal whitespace is flexible; internal boundary respected", () => {
     expect(bashMatcher("rm -rf *").test("rm   -rf /tmp/x")).toBe(true);
-    expect(bashMatcher("git reset --hard *").test("git reset --hardcore")).toBe(
-      false,
-    );
+    expect(bashMatcher("git reset --hard *").test("git reset --hardcore")).toBe(false);
   });
 });
 
@@ -290,15 +276,9 @@ describe("parseRule (adversarial)", () => {
 describe("candidateAbsPaths", () => {
   test("resolves relative + ~ against cwd/home; strips read selectors", () => {
     expect(candidateAbsPaths("foo.ts", "/work")).toEqual(["/work/foo.ts"]);
-    expect(candidateAbsPaths("~/x", "/work")).toEqual([
-      nodePath.join(os.homedir(), "x"),
-    ]);
-    expect(candidateAbsPaths("/work/foo.ts:50-100", "/work")).toEqual([
-      "/work/foo.ts",
-    ]);
-    expect(candidateAbsPaths("/work/foo.ts:raw", "/work")).toEqual([
-      "/work/foo.ts",
-    ]);
+    expect(candidateAbsPaths("~/x", "/work")).toEqual([nodePath.join(os.homedir(), "x")]);
+    expect(candidateAbsPaths("/work/foo.ts:50-100", "/work")).toEqual(["/work/foo.ts"]);
+    expect(candidateAbsPaths("/work/foo.ts:raw", "/work")).toEqual(["/work/foo.ts"]);
   });
   test("skips URLs and data/mailto schemes and empty input (negative)", () => {
     expect(candidateAbsPaths("https://x.com/a", "/work")).toEqual([]);
@@ -312,9 +292,7 @@ describe("candidateAbsPaths", () => {
     expect(out).toContain(`/work/bundle.zip:${inner}`);
     expect(out).toContain("/work/bundle.zip");
     expect(out).toContain(`/work/${inner}`);
-    expect(candidateAbsPaths("a.zip:~/x", "/work")).toContain(
-      nodePath.join(os.homedir(), "x"),
-    );
+    expect(candidateAbsPaths("a.zip:~/x", "/work")).toContain(nodePath.join(os.homedir(), "x"));
   });
 });
 
@@ -333,34 +311,21 @@ describe("pathTokens (path-signal extraction)", () => {
 describe("decide — path fields across tool classes", () => {
   const pol = buildPolicy(["Read(**/secrets/**)", "Write(**/out/**)"], []);
   test("array-valued path field is scanned element-wise", () => {
-    expect(
-      decide("read", { paths: ["/work/ok", "/work/secrets/k"] }, "/work", pol)
-        .block,
-    ).toBe(true);
-    expect(
-      decide("read", { paths: ["/work/ok", "/work/fine"] }, "/work", pol).block,
-    ).toBe(false);
+    expect(decide("read", { paths: ["/work/ok", "/work/secrets/k"] }, "/work", pol).block).toBe(
+      true,
+    );
+    expect(decide("read", { paths: ["/work/ok", "/work/fine"] }, "/work", pol).block).toBe(false);
   });
   test("non-string/non-array field values are ignored, never block (negative)", () => {
     expect(decide("read", { path: 42 }, "/work", pol).block).toBe(false);
-    expect(decide("read", { path: { nested: true } }, "/work", pol).block).toBe(
-      false,
-    );
-    expect(decide("read", { paths: [1, null, {}] }, "/work", pol).block).toBe(
-      false,
-    );
+    expect(decide("read", { path: { nested: true } }, "/work", pol).block).toBe(false);
+    expect(decide("read", { paths: [1, null, {}] }, "/work", pol).block).toBe(false);
     expect(decide("bash", { command: 99 }, "/work", pol).block).toBe(false);
   });
   test("read-only ignores write-deny; write/unknown tools honor it", () => {
-    expect(decide("read", { path: "/work/out/x" }, "/work", pol).block).toBe(
-      false,
-    );
-    expect(decide("write", { path: "/work/out/x" }, "/work", pol).block).toBe(
-      true,
-    );
-    expect(decide("wibble", { path: "/work/out/x" }, "/work", pol).block).toBe(
-      true,
-    );
+    expect(decide("read", { path: "/work/out/x" }, "/work", pol).block).toBe(false);
+    expect(decide("write", { path: "/work/out/x" }, "/work", pol).block).toBe(true);
+    expect(decide("wibble", { path: "/work/out/x" }, "/work", pol).block).toBe(true);
   });
   test("edit hashline header paths are checked in write context", () => {
     const body = `[/work/sec${"rets/k#1A2B"}]\n+x`;
@@ -372,23 +337,17 @@ describe("decide — path fields across tool classes", () => {
 describe("decide — shell & code fields", () => {
   const pol = buildPolicy(["Bash(git push --force *)", "Read(**/.ssh/**)"], []);
   test("denied bash pattern blocks after stripping sudo/env prefixes", () => {
-    expect(
-      decide("bash", { command: "sudo git push --force o" }, "/w", pol).block,
-    ).toBe(true);
-    expect(
-      decide("bash", { command: "A=1 git push --force o" }, "/w", pol).block,
-    ).toBe(true);
+    expect(decide("bash", { command: "sudo git push --force o" }, "/w", pol).block).toBe(true);
+    expect(decide("bash", { command: "A=1 git push --force o" }, "/w", pol).block).toBe(true);
     expect(decide("bash", { command: "ls -la" }, "/w", pol).block).toBe(false);
   });
   test("path-token scan catches a shell/code read of a denied path", () => {
-    expect(
-      decide("bash", { command: "cat ~/.ssh/id_ed25519" }, "/home/test", pol)
-        .block,
-    ).toBe(true);
-    expect(
-      decide("eval", { code: "open('~/.ssh/id_ed25519')" }, "/home/test", pol)
-        .block,
-    ).toBe(true);
+    expect(decide("bash", { command: "cat ~/.ssh/id_ed25519" }, "/home/test", pol).block).toBe(
+      true,
+    );
+    expect(decide("eval", { code: "open('~/.ssh/id_ed25519')" }, "/home/test", pol).block).toBe(
+      true,
+    );
   });
 });
 
@@ -404,10 +363,7 @@ describe("shellCommands — quote-aware command and word splitting", () => {
     ]);
   });
   test("a quoted script is parsed as nested commands", () => {
-    expect(shellCommands(`bash -c "ls; git push"`)).toContainEqual([
-      "git",
-      "push",
-    ]);
+    expect(shellCommands(`bash -c "ls; git push"`)).toContainEqual(["git", "push"]);
   });
 });
 
@@ -429,7 +385,7 @@ describe("isRecursiveRm — every recursive spelling, no false positives", () =>
     'rm "a;b" -rf',
     'bash -c "rm -r /tmp/x"',
   ])("blocks %p", (seg) => {
-    expect(shellCommands(seg).some(isRecursiveRm)).toBe(true);
+    expect(shellCommands(seg).some((words) => isRecursiveRm(words))).toBe(true);
   });
   test.each([
     "rm /tmp/x",
@@ -441,7 +397,7 @@ describe("isRecursiveRm — every recursive spelling, no false positives", () =>
     "grep -r rm .",
     "trash -r /tmp/x",
   ])("allows %p", (seg) => {
-    expect(shellCommands(seg).some(isRecursiveRm)).toBe(false);
+    expect(shellCommands(seg).some((words) => isRecursiveRm(words))).toBe(false);
   });
 });
 
@@ -459,29 +415,21 @@ describe("decide — recursive rm is blocked with no policy rule", () => {
     expect(d.reason).toContain("`trash <path>`");
   });
   test("plain rm of a file stays allowed", () => {
-    expect(decide("bash", { command: "rm /tmp/x" }, "/w", empty).block).toBe(
-      false,
-    );
+    expect(decide("bash", { command: "rm /tmp/x" }, "/w", empty).block).toBe(false);
   });
 });
 
 describe("decide — adversarial bypass vectors", () => {
   test("path traversal (..) resolving INTO a denied dir is blocked", () => {
     const pol = buildPolicy(["Read(**/vault/**)"], []);
-    expect(
-      decide("read", { path: "/work/pub/../vault/k" }, "/work", pol).block,
-    ).toBe(true);
+    expect(decide("read", { path: "/work/pub/../vault/k" }, "/work", pol).block).toBe(true);
     // ...and traversal OUT of a denied dir must NOT false-positive.
-    expect(
-      decide("read", { path: "/work/vault/../pub/k" }, "/work", pol).block,
-    ).toBe(false);
+    expect(decide("read", { path: "/work/vault/../pub/k" }, "/work", pol).block).toBe(false);
   });
   test("a read-class deny binds write/edit/unknown tools (any tool reads bytes)", () => {
     const pol = buildPolicy(["Read(**/vault/**)"], []);
     for (const tool of ["write", "edit", "notebook", "zzz"])
-      expect(decide(tool, { path: "/work/vault/k" }, "/work", pol).block).toBe(
-        true,
-      );
+      expect(decide(tool, { path: "/work/vault/k" }, "/work", pol).block).toBe(true);
   });
   test("a denied command hidden after a shell separator is still caught", () => {
     const pol = buildPolicy(["Bash(danger *)"], []);
@@ -492,27 +440,18 @@ describe("decide — adversarial bypass vectors", () => {
       "echo x | danger z",
       "echo x\ndanger w",
     ];
-    for (const command of evasions)
-      expect(decide("bash", { command }, "/w", pol).block).toBe(true);
-    expect(decide("bash", { command: "echo a; echo b" }, "/w", pol).block).toBe(
-      false,
-    );
+    for (const command of evasions) expect(decide("bash", { command }, "/w", pol).block).toBe(true);
+    expect(decide("bash", { command: "echo a; echo b" }, "/w", pol).block).toBe(false);
   });
   test("shell/code write to a Write-only-denied path is blocked (finding 1)", () => {
     const pol = buildPolicy(["Edit(/work/target.conf)"], []);
     // No matching Read deny — before the fix this bypassed the guard.
-    expect(
-      decide(
-        "bash",
-        { command: "echo evil >> /work/target.conf" },
-        "/work",
-        pol,
-      ).block,
-    ).toBe(true);
-    expect(
-      decide("eval", { code: "open('/work/target.conf','w')" }, "/work", pol)
-        .block,
-    ).toBe(true);
+    expect(decide("bash", { command: "echo evil >> /work/target.conf" }, "/work", pol).block).toBe(
+      true,
+    );
+    expect(decide("eval", { code: "open('/work/target.conf','w')" }, "/work", pol).block).toBe(
+      true,
+    );
     // Read-only access to the same write-denied path must remain permitted.
     expect(readBlocked("/work/target.conf", pol)).toBe(false);
   });
@@ -520,9 +459,7 @@ describe("decide — adversarial bypass vectors", () => {
 
 describe("redactText (defense-in-depth)", () => {
   test("redacts each known secret shape (positive)", () => {
-    expect(redactText(`x sk-ant-${"abcdefghij1234567"} y`)).toBe(
-      "x [REDACTED] y",
-    );
+    expect(redactText(`x sk-ant-${"abcdefghij1234567"} y`)).toBe("x [REDACTED] y");
     expect(redactText(`pk-${"abcdefghij1234567"}`)).toBe("[REDACTED]");
     expect(redactText(`AKIA${"1234567890ABCDEF"}`)).toBe("[REDACTED]");
     expect(redactText(`ghp_${"a".repeat(36)}`)).toBe("[REDACTED]");
@@ -540,24 +477,26 @@ describe("redactText (defense-in-depth)", () => {
     expect(redactText("ghp_tooshort")).toBe("ghp_tooshort");
     expect(redactText("")).toBe("");
     // FP guards — secret-adjacent shapes that must NOT be redacted.
-    expect(redactText("a1b2c3d4e5".repeat(4))).toBe("a1b2c3d4e5".repeat(4)); // git SHA (40-hex)
+    // A git SHA (40 hex characters).
+    expect(redactText("a1b2c3d4e5".repeat(4))).toBe("a1b2c3d4e5".repeat(4));
+    // A UUID.
     expect(redactText("12345678-1234-1234-1234-123456789012")).toBe(
       "12345678-1234-1234-1234-123456789012",
-    ); // UUID
-    expect(redactText("https://user@github.com/x")).toBe(
-      "https://user@github.com/x",
-    ); // URL user, no password
-    expect(redactText("https://example.com:8080/path")).toBe(
-      "https://example.com:8080/path",
-    ); // port, not credentials
+    );
+    // A user in the URL with no credential after it.
+    expect(redactText("https://user@github.com/x")).toBe("https://user@github.com/x");
+    // A port, not credentials.
+    expect(redactText("https://example.com:8080/path")).toBe("https://example.com:8080/path");
   });
 });
 
 describe("redactText — provider token shapes (positive)", () => {
   test("redacts newly-added provider token shapes", () => {
     for (const s of [
-      `gho_${"a".repeat(36)}`, // GitHub CLI OAuth token
-      `gho_${"a".repeat(40)}`, // longer body — must match {36,}, not exactly 36
+      // GitHub CLI OAuth token.
+      `gho_${"a".repeat(36)}`,
+      // A longer body must match {36,}, not exactly 36.
+      `gho_${"a".repeat(40)}`,
       `glpat-${"a".repeat(20)}`,
       `xapp-${"1234567890abc"}`,
       `AIza${"a".repeat(35)}`,
@@ -572,37 +511,31 @@ describe("redactText — provider token shapes (positive)", () => {
       `M${"a".repeat(23)}.${"a".repeat(6)}.${"a".repeat(27)}`,
       `123456789-${"a".repeat(32)}.apps.googleusercontent.com`,
       `eyJ${"a".repeat(10)}.eyJ${"a".repeat(10)}.${"a".repeat(20)}`,
-      `ghs_${"a".repeat(36)}`, // classic server-to-server token
-      `ghs_123456_${"A".repeat(40)}.${"B".repeat(60)}.${"C".repeat(40)}`, // stateless ghs_APPID_JWT
+      // Classic server-to-server token.
+      `ghs_${"a".repeat(36)}`,
+      // Stateless ghs_APPID_JWT.
+      `ghs_123456_${"A".repeat(40)}.${"B".repeat(60)}.${"C".repeat(40)}`,
     ])
       expect(redactText(s)).toBe("[REDACTED]");
     // AWS secret access key only redacts in context (label + value).
-    expect(redactText(`aws_secret_access_key = ${"A".repeat(40)}`)).toBe(
-      "[REDACTED]",
-    );
+    expect(redactText(`aws_secret_access_key = ${"A".repeat(40)}`)).toBe("[REDACTED]");
     // Slack webhook keeps the scheme, redacts the secret path.
-    expect(
-      redactText(`https://hooks.slack.com/services/T0/B0/${"a".repeat(20)}`),
-    ).toBe("https://[REDACTED]");
+    expect(redactText(`https://hooks.slack.com/services/T0/B0/${"a".repeat(20)}`)).toBe(
+      "https://[REDACTED]",
+    );
   });
 });
 
 describe("redactText — credential URLs (positive)", () => {
   test("redacts credentials embedded in connection URLs", () => {
-    expect(
-      redactText(
-        "postgres://postgresAdmin:posgresPassword@postgres:5432/my-db",
-      ),
-    ).toBe("[REDACTED]");
-    expect(redactText("rediss://:password@redis:6379/0")).toBe("[REDACTED]");
-    // secret in the query string is swept in with the DSN.
-    expect(redactText("postgres://u:p@h/db?password=hunter2")).toBe(
+    expect(redactText("postgres://postgresAdmin:posgresPassword@postgres:5432/my-db")).toBe(
       "[REDACTED]",
     );
+    expect(redactText("rediss://:password@redis:6379/0")).toBe("[REDACTED]");
+    // secret in the query string is swept in with the DSN.
+    expect(redactText("postgres://u:p@h/db?password=hunter2")).toBe("[REDACTED]");
     // only the URL is redacted; surrounding JSON delimiters are preserved.
-    expect(redactText('{"url":"mysql://a:b@db/x"}')).toBe(
-      '{"url":"[REDACTED]"}',
-    );
+    expect(redactText('{"url":"mysql://a:b@db/x"}')).toBe('{"url":"[REDACTED]"}');
   });
 });
 
@@ -629,15 +562,8 @@ describe("loadPolicyEntries (settings file merge)", () => {
       const bad = nodePath.join(dir, "bad.json");
       fs.writeFileSync(bad, "{ not json ");
       const shaped = nodePath.join(dir, "shaped.json");
-      fs.writeFileSync(
-        shaped,
-        JSON.stringify({ permissions: { deny: "nope" } }),
-      );
-      const { deny, allow } = loadPolicyEntries([
-        bad,
-        shaped,
-        nodePath.join(dir, "nope.json"),
-      ]);
+      fs.writeFileSync(shaped, JSON.stringify({ permissions: { deny: "nope" } }));
+      const { deny, allow } = loadPolicyEntries([bad, shaped, nodePath.join(dir, "nope.json")]);
       expect(deny).toEqual(EMBEDDED_DENY);
       expect(allow).toEqual(EMBEDDED_ALLOW);
     });
@@ -677,9 +603,12 @@ describe("claudeFiles (default settings file locations)", () => {
       );
       // home has no .claude files, so only the project sources contribute.
       const { deny, allow } = loadPolicyEntries(claudeFiles(home, proj));
-      expect(deny).toContain("Read(/proj/shared-secret)"); // project settings.json
-      expect(deny).toContain("Read(/proj/secret)"); // project settings.local.json
-      expect(deny).toContain("Read(**/.env*)"); // defaults still present
+      // From the project settings.json.
+      expect(deny).toContain("Read(/proj/shared-secret)");
+      // From the project settings.local.json.
+      expect(deny).toContain("Read(/proj/secret)");
+      // The defaults are still present.
+      expect(deny).toContain("Read(**/.env*)");
       expect(allow).toContain("Write(/proj/tmp/**)");
       expect(allow).toEqual(expect.arrayContaining(EMBEDDED_ALLOW));
     });
@@ -690,7 +619,7 @@ describe("rulesGuard wiring — registration & session_start", () => {
   test("sets a label of the expected shape and registers four hooks", () => {
     const { pi, handlers, state } = makeMockPi();
     rulesGuard(pi);
-    expect(state.label).toMatch(/^RULES guard \(\d+ deny \/ \d+ allow\)$/);
+    expect(state.label).toMatch(/^RULES guard \(\d+ deny \/ \d+ allow\)$/u);
     expect(handlers.has("session_start")).toBe(true);
     expect(handlers.has("tool_call")).toBe(true);
     expect(handlers.has("tool_result")).toBe(true);
@@ -704,7 +633,7 @@ describe("rulesGuard wiring — registration & session_start", () => {
     const ui = { notify: (m: string) => void msgs.push(m) };
     await start({}, { hasUI: true, ui });
     await start({}, { hasUI: false, ui });
-    await start({}, undefined);
+    await start({});
     expect(msgs).toHaveLength(1);
   });
 });
@@ -719,12 +648,8 @@ describe("rulesGuard wiring — tool_call", () => {
       { cwd: "/work" },
     )) as { block?: boolean } | undefined;
     expect(hit?.block).toBe(true);
-    expect(
-      await onCall({ toolName: "read", input: {} }, { cwd: "/work" }),
-    ).toBeUndefined();
-    expect(
-      await onCall({ toolName: "read", input: {} }, undefined),
-    ).toBeUndefined();
+    expect(await onCall({ toolName: "read", input: {} }, { cwd: "/work" })).toBeUndefined();
+    expect(await onCall({ toolName: "read", input: {} })).toBeUndefined();
   });
 });
 
@@ -747,14 +672,9 @@ describe("rulesGuard wiring — tool_result", () => {
       {},
     );
     expect(clean).toBeUndefined();
-    const err = await onResult(
-      { isError: true, content: [{ type: "text", text: tok }] },
-      {},
-    );
+    const err = await onResult({ isError: true, content: [{ type: "text", text: tok }] }, {});
     expect(err).toBeUndefined();
-    expect(
-      await onResult({ isError: false, content: "x" }, {}),
-    ).toBeUndefined();
+    expect(await onResult({ isError: false, content: "x" }, {})).toBeUndefined();
   });
 });
 
@@ -763,35 +683,19 @@ const FUZZ_POL = buildPolicy(
   ["Read(**/secrets/**)", "Bash(rm -rf *)", "Write(**/.env*)"],
   ["Read(**/.env.example)"],
 );
-const FUZZ_TOOLS = [
-  "read",
-  "write",
-  "edit",
-  "bash",
-  "eval",
-  "glob",
-  "z",
-] as const;
-const FUZZ_FIELDS = [
-  "path",
-  "paths",
-  "command",
-  "code",
-  "input",
-  "junk",
-] as const;
+const FUZZ_TOOLS = ["read", "write", "edit", "bash", "eval", "glob", "z"] as const;
+const FUZZ_FIELDS = ["path", "paths", "command", "code", "input", "junk"] as const;
 const FUZZ_ALPHA = "abcXYZ/._~-*?:'\"()[]{} \n;&|=";
 
 describe("fuzzy — decide & compileGlob never blow up", () => {
   test("decide tolerates arbitrary tool/field/value combos", () => {
     const rng = mulberry32(0xc0ffee);
     for (let i = 0; i < 2000; i++) {
-      const tool = FUZZ_TOOLS[Math.floor(rng() * FUZZ_TOOLS.length)] ?? "read";
-      const field =
-        FUZZ_FIELDS[Math.floor(rng() * FUZZ_FIELDS.length)] ?? "path";
+      const tool = must(FUZZ_TOOLS[Math.floor(rng() * FUZZ_TOOLS.length)]);
+      const field = must(FUZZ_FIELDS[Math.floor(rng() * FUZZ_FIELDS.length)]);
       const val = randStr(rng, Math.floor(rng() * 24), FUZZ_ALPHA);
-      const input: Record<string, unknown> =
-        rng() < 0.5 ? { [field]: val } : { [field]: [val, val] };
+      const shapes = [val, [val, val]];
+      const input: Record<string, unknown> = { [field]: must(shapes[Math.floor(rng() * 2)]) };
       expect(() => decide(tool, input, "/work", FUZZ_POL)).not.toThrow();
     }
   });
@@ -813,8 +717,7 @@ describe("fuzzy — redaction idempotence & deny coverage", () => {
     for (let i = 0; i < 2000; i++) {
       let s = "";
       const n = 1 + Math.floor(rng() * 6);
-      for (let j = 0; j < n; j++)
-        s += bits[Math.floor(rng() * bits.length)] ?? "";
+      for (let j = 0; j < n; j++) s += must(bits[Math.floor(rng() * bits.length)]);
       const once = redactText(s);
       expect(redactText(once)).toBe(once);
     }
@@ -824,10 +727,7 @@ describe("fuzzy — redaction idempotence & deny coverage", () => {
     const leaf = "abcdefghijklmnopqrstuvwxyz0123456789-_";
     for (let i = 0; i < 500; i++) {
       const name = randStr(rng, 1 + Math.floor(rng() * 12), leaf);
-      expect(
-        decide("read", { path: `/work/secrets/${name}` }, "/work", FUZZ_POL)
-          .block,
-      ).toBe(true);
+      expect(decide("read", { path: `/work/secrets/${name}` }, "/work", FUZZ_POL).block).toBe(true);
     }
   });
 });
@@ -857,23 +757,20 @@ describe("redactMessages — operator-originated carriers", () => {
     expect(out[0]?.command).toBe("psql [REDACTED] -c 'select 1'");
     expect(out[0]?.output).not.toContain("postgres://");
     expect(out[0]?.command).not.toContain("postgres://");
-    expect(msgs[0]?.output).toContain(DSN); // input untouched (copy-on-write)
+    // The input is untouched (copy-on-write).
+    expect(msgs[0]?.output).toContain(DSN);
     expect(msgs[0]?.command).toContain(DSN);
   });
 
   test("redacts pythonExecution output/code and fileMention contents", () => {
     const py = must(
-      redactMessages([
-        { role: "pythonExecution", code: `u="${DSN}"`, output: DSN },
-      ]),
+      redactMessages([{ role: "pythonExecution", code: `u="${DSN}"`, output: DSN }]),
     ) as Array<{ code: string; output: string }>;
     expect(py[0]?.output).toBe("[REDACTED]");
     expect(py[0]?.code).toBe('u="[REDACTED]"');
 
     const fm = must(
-      redactMessages([
-        { role: "fileMention", files: [{ path: ".env", content: DSN }] },
-      ]),
+      redactMessages([{ role: "fileMention", files: [{ path: ".env", content: DSN }] }]),
     ) as Array<{ files: Array<{ path: string; content: string }> }>;
     expect(fm[0]?.files[0]?.content).toBe("[REDACTED]");
     expect(fm[0]?.files[0]?.path).toBe(".env");
@@ -894,7 +791,8 @@ describe("redactMessages — operator-originated carriers", () => {
     const dev = must(out[1]).content as Array<{ text?: string }>;
     expect(dev[0]?.text).toBe("[REDACTED]");
     const tr = must(out[2]).content as Array<{ type?: string; text?: string }>;
-    expect(tr[0]?.type).toBe("image"); // non-text block passed through
+    // A non-text block passes through.
+    expect(tr[0]?.type).toBe("image");
     expect(tr[1]?.text).toBe("[REDACTED]");
   });
 });
@@ -978,12 +876,12 @@ describe("redactMessages — opaque payloads are never walked", () => {
       ]),
     ) as Array<Record<string, unknown>>;
     const msg = must(out[0]);
-    expect((msg["content"] as Array<{ text?: string }>)[0]?.text).toBe(
-      "[REDACTED]",
-    );
-    expect(msg["details"]).toBe(details); // same reference, never walked
+    expect((msg["content"] as Array<{ text?: string }>)[0]?.text).toBe("[REDACTED]");
+    // Same reference, never walked.
+    expect(msg["details"]).toBe(details);
     expect(msg["providerPayload"]).toBe(providerPayload);
-    expect(details.nested).toBe(DSN); // and byte-identical inside
+    // And byte-identical inside.
+    expect(details.nested).toBe(DSN);
     expect(providerPayload.items[0]?.encrypted_content).toBe(DSN);
   });
 });
@@ -994,7 +892,8 @@ describe("redactMessages — sharing & malformed input", () => {
     const dirty = { role: "bashExecution", output: DSN };
     expect(redactMessages([clean])).toBeUndefined();
     const out = must(redactMessages([clean, dirty]));
-    expect(out[0]).toBe(clean); // identity preserved — no needless allocation
+    // Identity is preserved, so there is no needless allocation.
+    expect(out[0]).toBe(clean);
     expect(out[1]).not.toBe(dirty);
   });
 
@@ -1016,9 +915,7 @@ describe("redactMessages — sharing & malformed input", () => {
       ]),
     ).not.toThrow();
     // ...and stays inert rather than counting as a content role.
-    expect(
-      redactMessages([{ role: "toString", content: DSN }]),
-    ).toBeUndefined();
+    expect(redactMessages([{ role: "toString", content: DSN }])).toBeUndefined();
   });
 });
 
@@ -1034,9 +931,7 @@ describe("rulesGuard wiring — context", () => {
       {},
     )) as { messages?: Array<{ output?: string }> } | undefined;
     expect(hit?.messages?.[0]?.output).toBe("[REDACTED]");
-    expect(
-      await onContext({ messages: [{ role: "user", content: "hi" }] }, {}),
-    ).toBeUndefined();
+    expect(await onContext({ messages: [{ role: "user", content: "hi" }] }, {})).toBeUndefined();
     expect(await onContext({ messages: "nope" }, {})).toBeUndefined();
   });
 });
