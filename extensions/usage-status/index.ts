@@ -112,7 +112,7 @@ export function providerLabel(provider: string): string {
   const known = KNOWN_LABELS[provider];
   if (known) return known;
   return provider
-    .split(/[-_]/)
+    .split(/[-_]/u)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 }
@@ -129,12 +129,11 @@ function durationToken(ms: number): string {
 /** Compact window token, preferring the reported duration, then id/label. */
 export function windowToken(limit: UsageLimitLike): string {
   const duration = limit.window?.durationMs;
-  if (typeof duration === "number" && duration > 0)
-    return durationToken(duration);
+  if (typeof duration === "number" && duration > 0) return durationToken(duration);
   const id = (limit.scope.windowId ?? limit.window?.id ?? "")
     .toLowerCase()
-    .replace(/^rolling-/, "");
-  if (/^\d+(m|h|d|w|mo)$/.test(id)) return id;
+    .replace(/^rolling-/u, "");
+  if (/^\d+(m|h|d|w|mo)$/u.test(id)) return id;
   return WINDOW_WORDS[id] ?? (id || limit.window?.label || "?");
 }
 
@@ -144,7 +143,7 @@ export function remainingPercent(limit: UsageLimitLike): number | undefined {
   if (!amount) return undefined;
   const fraction =
     amount.remainingFraction ??
-    (amount.usedFraction !== undefined ? 1 - amount.usedFraction : undefined);
+    (amount.usedFraction === undefined ? undefined : 1 - amount.usedFraction);
   if (fraction === undefined) return undefined;
   return Math.round(Math.min(1, Math.max(0, fraction)) * 100);
 }
@@ -162,8 +161,7 @@ export function formatReset(ms: number): string {
   const days = Math.floor(totalMinutes / (24 * 60));
   const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
   const minutes = totalMinutes % 60;
-  if (days > 0)
-    return `${days}d${hours ? `${hours}h` : ""}${minutes ? `${minutes}m` : ""}`;
+  if (days > 0) return `${days}d${hours ? `${hours}h` : ""}${minutes ? `${minutes}m` : ""}`;
   if (hours > 0) return `${hours}h${minutes ? `${minutes}m` : ""}`;
   if (minutes > 0) return `${minutes}m`;
   return "<1m";
@@ -196,15 +194,12 @@ function selectMeters(limits: readonly UsageLimitLike[]): Meter[] {
       byTier.set(tier, windows);
     }
     const key =
-      limit.scope.windowId ??
-      limit.window?.id ??
-      limit.window?.label ??
-      windowToken(limit);
+      limit.scope.windowId ?? limit.window?.id ?? limit.window?.label ?? windowToken(limit);
     if (!windows.has(key)) windows.set(key, limit);
   }
   return [...byTier].map(([tier, windows]) => ({
     tier,
-    windows: [...windows.values()].sort(
+    windows: [...windows.values()].toSorted(
       (a, b) =>
         (a.window?.durationMs ?? Number.POSITIVE_INFINITY) -
         (b.window?.durationMs ?? Number.POSITIVE_INFINITY),
@@ -217,20 +212,14 @@ function accountLabel(report: UsageReportLike): string {
   const meta = report.metadata ?? {};
   const email = typeof meta["email"] === "string" ? meta["email"] : "";
   if (email) return email.split("@")[0] || email;
-  const accountId =
-    typeof meta["accountId"] === "string" ? meta["accountId"] : "";
+  const accountId = typeof meta["accountId"] === "string" ? meta["accountId"] : "";
   if (accountId) return accountId;
-  const projectId =
-    typeof meta["projectId"] === "string" ? meta["projectId"] : "";
+  const projectId = typeof meta["projectId"] === "string" ? meta["projectId"] : "";
   return projectId || "acct";
 }
 
 /** Render one window as "<token> <pct>%[ (<reset>)]", with color on the values. */
-function formatWindow(
-  limit: UsageLimitLike,
-  now: number,
-  style: RowStyle,
-): string {
+function formatWindow(limit: UsageLimitLike, now: number, style: RowStyle): string {
   const remaining = remainingPercent(limit) ?? 0;
   const pct = style.fg(usageColor(remaining), `${remaining}%`);
   const resetsAt = limit.window?.resetsAt;
@@ -248,9 +237,7 @@ function optionalString(value: unknown): boolean {
 
 /** Absent, or a finite number. */
 function optionalFiniteNumber(value: unknown): boolean {
-  return (
-    value === undefined || (typeof value === "number" && Number.isFinite(value))
-  );
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
 }
 
 /** Runtime guard for a well-formed limit: network data is cast, not validated, so
@@ -263,15 +250,11 @@ function isUsageLimit(value: unknown): value is UsageLimitLike {
   if (!optionalFiniteNumber(amount.remainingFraction)) return false;
   if (!optionalFiniteNumber(amount.usedFraction)) return false;
   if (typeof scope !== "object" || scope === null) return false;
-  if (!optionalString(scope.windowId) || !optionalString(scope.tier))
-    return false;
+  if (!optionalString(scope.windowId) || !optionalString(scope.tier)) return false;
   if (window === undefined) return true;
   if (typeof window !== "object" || window === null) return false;
   if (!optionalString(window.id) || !optionalString(window.label)) return false;
-  return (
-    optionalFiniteNumber(window.durationMs) &&
-    optionalFiniteNumber(window.resetsAt)
-  );
+  return optionalFiniteNumber(window.durationMs) && optionalFiniteNumber(window.resetsAt);
 }
 
 /** Validate raw usage data before it is treated as `UsageReportLike[]`: keep only
@@ -283,8 +266,7 @@ function sanitizeUsageReports(value: unknown): UsageReportLike[] {
   for (const entry of value) {
     if (typeof entry !== "object" || entry === null) continue;
     const report = entry as UsageReportLike;
-    if (typeof report.provider !== "string" || !Array.isArray(report.limits))
-      continue;
+    if (typeof report.provider !== "string" || !Array.isArray(report.limits)) continue;
     reports.push({ ...report, limits: report.limits.filter(isUsageLimit) });
   }
   return reports;
@@ -297,8 +279,7 @@ export function formatUsageStatus(
   style: RowStyle = PLAIN_STYLE,
 ): string | undefined {
   const valid = reports.filter(
-    (r): r is UsageReportLike =>
-      !!r && typeof r.provider === "string" && Array.isArray(r.limits),
+    (r): r is UsageReportLike => !!r && typeof r.provider === "string" && Array.isArray(r.limits),
   );
   const rendered: { report: UsageReportLike; meters: Meter[] }[] = [];
   for (const report of valid) {
@@ -313,9 +294,7 @@ export function formatUsageStatus(
     const brand = providerLabel(report.provider);
     // Disambiguate with an account label only when a provider has >1 rendered account.
     const base =
-      (counts.get(report.provider) ?? 0) > 1
-        ? `${brand}:${accountLabel(report)}`
-        : brand;
+      (counts.get(report.provider) ?? 0) > 1 ? `${brand}:${accountLabel(report)}` : brand;
     return meters.map((meter) => ({
       label: meter.tier ? `${base} ${providerLabel(meter.tier)}` : base,
       windows: meter.windows,
@@ -329,7 +308,7 @@ export function formatUsageStatus(
         .map((window) => formatWindow(window, now, style))
         .join(style.dot)}`,
   );
-  return parts.length ? parts.join(style.pipe) : undefined;
+  return parts.length > 0 ? parts.join(style.pipe) : undefined;
 }
 
 interface ThemeLike {
@@ -365,10 +344,7 @@ class UsageRow {
       });
       if (!plain) return EMPTY_ROWS;
       if ([...plain].length <= width) {
-        return [
-          formatUsageStatus(this.reports, now, { ...base, fg: this.#fg }) ??
-            plain,
-        ];
+        return [formatUsageStatus(this.reports, now, { ...base, fg: this.#fg }) ?? plain];
       }
     }
     return EMPTY_ROWS;
@@ -423,8 +399,7 @@ function clearWidget(state: UsageState): void {
 async function fetchReports(state: UsageState): Promise<void> {
   const registry = state.ctx?.modelRegistry;
   const usage = registry?.authStorage?.usage;
-  if (!registry || state.inFlight || typeof usage?.reports !== "function")
-    return;
+  if (!registry || state.inFlight || typeof usage?.reports !== "function") return;
   const generation = state.generation;
   state.inFlight = true;
   try {
@@ -432,7 +407,8 @@ async function fetchReports(state: UsageState): Promise<void> {
       baseUrlResolver: (provider) => registry.getProviderBaseUrl(provider),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    if (generation !== state.generation) return; // superseded by a session switch
+    // Superseded by a session switch.
+    if (generation !== state.generation) return;
     state.reports = sanitizeUsageReports(result);
     state.fetchedAt = Date.now();
   } catch {

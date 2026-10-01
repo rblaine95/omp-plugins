@@ -1,5 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
+
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+
 import usageStatus, {
   formatReset,
   formatUsageStatus,
@@ -16,6 +18,13 @@ const MIN = 60_000;
 const HR = 60 * MIN;
 const DAY = 24 * HR;
 
+type Defined<T> = { [K in keyof T]?: Exclude<T[K], undefined> };
+
+/** Drop keys whose value is `undefined`, so fixtures satisfy `exactOptionalPropertyTypes`. */
+function defined<T extends object>(obj: T): Defined<T> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Defined<T>;
+}
+
 function limit(opts: {
   windowId?: string;
   windowIdField?: string;
@@ -27,18 +36,22 @@ function limit(opts: {
   remainingFraction?: number;
 }): UsageReportLike["limits"][number] {
   return {
-    scope: { windowId: opts.windowId, tier: opts.tier },
-    window: {
+    scope: defined({ windowId: opts.windowId, tier: opts.tier }),
+    window: defined({
       id: opts.windowIdField,
       label: opts.windowLabel,
       durationMs: opts.durationMs,
       resetsAt: opts.resetsAt,
-    },
-    amount: {
+    }),
+    amount: defined({
       usedFraction: opts.usedFraction,
       remainingFraction: opts.remainingFraction,
-    },
+    }),
   };
+}
+
+function codex(...limits: UsageReportLike["limits"]): UsageReportLike[] {
+  return [{ provider: "openai-codex", limits }];
 }
 
 describe("formatReset", () => {
@@ -88,9 +101,7 @@ describe("windowToken", () => {
 
 describe("remainingPercent", () => {
   test("prefers remainingFraction, falls back to 1 - usedFraction, clamps", () => {
-    expect(
-      remainingPercent(limit({ remainingFraction: 0.58, usedFraction: 0.1 })),
-    ).toBe(58);
+    expect(remainingPercent(limit({ remainingFraction: 0.58, usedFraction: 0.1 }))).toBe(58);
     expect(remainingPercent(limit({ usedFraction: 0.82 }))).toBe(18);
     expect(remainingPercent(limit({ usedFraction: 1.5 }))).toBe(0);
     expect(remainingPercent(limit({ remainingFraction: 1.2 }))).toBe(100);
@@ -214,9 +225,7 @@ describe("formatUsageStatus styling", () => {
         ],
       },
     ];
-    expect(formatUsageStatus(reports, NOW, tag)).toBe(
-      "[accent]Claude 5h [error]10% [dim](30m)",
-    );
+    expect(formatUsageStatus(reports, NOW, tag)).toBe("[accent]Claude 5h [error]10% [dim](30m)");
   });
 });
 
@@ -242,9 +251,7 @@ describe("formatUsageStatus window selection", () => {
         ],
       },
     ];
-    expect(formatUsageStatus(reports, NOW)).toBe(
-      "Claude 5h 100% · 7d 98%  |  Claude Fable 7d 97%",
-    );
+    expect(formatUsageStatus(reports, NOW)).toBe("Claude 5h 100% · 7d 98%  |  Claude Fable 7d 97%");
   });
 
   test("omits reset countdown when the window has already reset", () => {
@@ -297,9 +304,6 @@ describe("formatUsageStatus tiered meters", () => {
     durationMs: 7 * DAY,
     remainingFraction: 0.4,
   });
-  const codex = (...limits: UsageReportLike["limits"]): UsageReportLike[] => [
-    { provider: "openai-codex", limits },
-  ];
 
   test("renders Spark as its own entry beside the base meter", () => {
     expect(formatUsageStatus(codex(chat7d, spark5h, spark7d), NOW)).toBe(
@@ -315,9 +319,9 @@ describe("formatUsageStatus tiered meters", () => {
       durationMs: 5 * HR,
       remainingFraction: 0.4,
     });
-    expect(
-      formatUsageStatus(codex(chat5h, chat7d, spark5h, spark7d), NOW),
-    ).toBe("Codex 5h 40% · 7d 72%  |  Codex Spark 5h 95% · 7d 92%");
+    expect(formatUsageStatus(codex(chat5h, chat7d, spark5h, spark7d), NOW)).toBe(
+      "Codex 5h 40% · 7d 72%  |  Codex Spark 5h 95% · 7d 92%",
+    );
   });
 
   test("labels an unfamiliar tier from its reported id", () => {
@@ -347,9 +351,7 @@ describe("formatUsageStatus multi-account", () => {
         limits: [limit({ windowId: "5h", remainingFraction: 0.9 })],
       },
     ];
-    expect(formatUsageStatus(reports, NOW)).toBe(
-      "Claude:alice 5h 90%  |  Claude:bob 5h 40%",
-    );
+    expect(formatUsageStatus(reports, NOW)).toBe("Claude:alice 5h 90%  |  Claude:bob 5h 40%");
   });
 
   test("omits the account label for a single-account provider", () => {
@@ -373,7 +375,8 @@ describe("formatUsageStatus multi-account", () => {
       {
         provider: "anthropic",
         metadata: { email: "alice@home.com" },
-        limits: [limit({ windowId: "monthly" })], // no remaining → not rendered
+        // No remaining fraction, so not rendered.
+        limits: [limit({ windowId: "monthly" })],
       },
     ];
     expect(formatUsageStatus(reports, NOW)).toBe("Claude 5h 40%");
@@ -407,9 +410,7 @@ interface UiCtxOptions {
   reports: UsageReportLike[];
   widgetCalls: unknown[];
   hasUI?: boolean;
-  onFetch?: (opts: {
-    baseUrlResolver: (p: string) => string | undefined;
-  }) => void;
+  onFetch?: (opts: { baseUrlResolver: (p: string) => string | undefined }) => void;
 }
 
 function uiCtx(o: UiCtxOptions): ExtensionContext {
@@ -420,9 +421,7 @@ function uiCtx(o: UiCtxOptions): ExtensionContext {
       getProviderBaseUrl: (p: string) => `https://api/${p}`,
       authStorage: {
         usage: {
-          reports: (opts: {
-            baseUrlResolver: (p: string) => string | undefined;
-          }) => {
+          reports: (opts: { baseUrlResolver: (p: string) => string | undefined }) => {
             o.onFetch?.(opts);
             return Promise.resolve(o.reports);
           },
@@ -461,29 +460,24 @@ describe("usageStatus wiring", () => {
     try {
       handlers["session_start"]?.({}, ctx);
       expect(widgetCalls).toHaveLength(1);
-      const [key, factory, opts] = widgetCalls[0] as [
-        string,
-        WidgetFactory,
-        unknown,
-      ];
+      const [key, factory, opts] = widgetCalls[0] as [string, WidgetFactory, unknown];
       expect(key).toBe("usage-status");
       expect(opts).toEqual({ placement: "aboveEditor" });
       const component = factory({ requestRender: () => renders++ }, FAKE_THEME);
-      expect(component.render(200)).toEqual([]); // no data fetched yet
+      // No data fetched yet.
+      expect(component.render(200)).toEqual([]);
       await flushMicrotasks();
       expect(baseUrl).toBe("https://api/anthropic");
       expect(renders).toBeGreaterThan(0);
       expect(component.render(200)).toEqual(["Claude 5h 62% (1h30m)"]);
-      expect(component.render(13)).toEqual(["Claude 5h 62%"]); // drops reset to fit
-      expect(component.render(5)).toEqual([]); // hides when nothing fits
+      // Drops the reset countdown to fit.
+      expect(component.render(13)).toEqual(["Claude 5h 62%"]);
+      // Hides when nothing fits.
+      expect(component.render(5)).toEqual([]);
     } finally {
       handlers["session_shutdown"]?.({}, ctx);
     }
-    expect(widgetCalls.at(-1)).toEqual([
-      "usage-status",
-      undefined,
-      { placement: "aboveEditor" },
-    ]);
+    expect(widgetCalls.at(-1)).toEqual(["usage-status", undefined, { placement: "aboveEditor" }]);
   });
 });
 
@@ -535,9 +529,11 @@ describe("usageStatus refresh", () => {
       factory({ requestRender: () => renders++ }, FAKE_THEME);
       await flushMicrotasks();
       const before = renders;
-      jest.advanceTimersByTime(60_000); // interval → tick → redraw
+      // Interval, then tick, then redraw.
+      jest.advanceTimersByTime(60_000);
       expect(renders).toBeGreaterThan(before);
-      handlers["session_switch"]?.({}, ctx); // resets state and reinstalls
+      // Resets state and reinstalls.
+      handlers["session_switch"]?.({}, ctx);
       expect(widgetCalls.length).toBeGreaterThan(1);
       expect(fetches).toBeGreaterThanOrEqual(2);
     } finally {
@@ -631,17 +627,16 @@ describe("usageStatus session switch", () => {
         limits: [limit({ windowId: "5h", remainingFraction: 0.3 })],
       };
       handlers["session_switch"]?.({}, ctx);
-      expect(widgetCalls[1]).toEqual([
-        "usage-status",
-        undefined,
-        { placement: "aboveEditor" },
-      ]); // old widget torn down before reinstall
+      // The old widget is torn down before the reinstall.
+      expect(widgetCalls[1]).toEqual(["usage-status", undefined, { placement: "aboveEditor" }]);
       const second = (widgetCalls[2] as [string, WidgetFactory, unknown])[1](
         { requestRender() {} },
         FAKE_THEME,
       );
-      expect(second).not.toBe(first); // lifecycle reset: fresh component
-      expect(second.render(200)).toEqual([]); // stale reports cleared before refetch
+      // Lifecycle reset: a fresh component.
+      expect(second).not.toBe(first);
+      // Stale reports are cleared before the refetch.
+      expect(second.render(200)).toEqual([]);
       await flushMicrotasks();
       expect(second.render(200)).toEqual(["Codex 5h 30%"]);
     } finally {
@@ -667,39 +662,39 @@ describe("usageStatus stale fetch", () => {
         limits: [limit({ windowId: "5h", remainingFraction: 0.2 })],
       },
     ];
-    let call = 0;
+    const pendingFirst = new Promise<UsageReportLike[]>((res) => {
+      resolveFirst = () => res(first);
+    });
+    const responses = [pendingFirst, Promise.resolve(second)];
     const ctx = {
       hasUI: true,
       ui: { setWidget: (...args: unknown[]) => widgetCalls.push(args) },
       modelRegistry: {
-        getProviderBaseUrl: () => undefined,
+        getProviderBaseUrl: () => {},
         authStorage: {
           usage: {
-            reports: () => {
-              call += 1;
-              return call === 1
-                ? new Promise<UsageReportLike[]>((res) => {
-                    resolveFirst = () => res(first);
-                  })
-                : Promise.resolve(second);
-            },
+            reports: () => responses.shift(),
           },
         },
       },
     } as unknown as ExtensionContext;
     usageStatus(fakePi(handlers));
     try {
-      handlers["session_start"]?.({}, ctx); // fetch #1 starts, stays pending
-      handlers["session_switch"]?.({}, ctx); // teardown + fetch #2
+      // Fetch #1 starts and stays pending.
+      handlers["session_start"]?.({}, ctx);
+      // Teardown, then fetch #2.
+      handlers["session_switch"]?.({}, ctx);
       const comp = (widgetCalls.at(-1) as [string, WidgetFactory, unknown])[1](
         { requestRender() {} },
         FAKE_THEME,
       );
       await flushMicrotasks();
       expect(comp.render(200)).toEqual(["Codex 5h 20%"]);
-      resolveFirst?.(); // stale fetch #1 resolves late
+      // The stale fetch #1 resolves late.
+      resolveFirst?.();
       await flushMicrotasks();
-      expect(comp.render(200)).toEqual(["Codex 5h 20%"]); // not clobbered
+      // Not clobbered by the stale fetch.
+      expect(comp.render(200)).toEqual(["Codex 5h 20%"]);
     } finally {
       handlers["session_shutdown"]?.({}, ctx);
     }

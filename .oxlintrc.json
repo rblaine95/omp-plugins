@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "jest"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "pedantic": "error",
+    "perf": "error"
+  },
+  "rules": {
+    "typescript/no-explicit-any": "error",
+
+    "no-console": "off",
+
+    "eslint/no-await-in-loop": "off",
+
+    "eslint/max-lines": "off",
+    "eslint/max-lines-per-function": ["error", { "max": 100 }],
+    "eslint/max-classes-per-file": "off"
+  }
+}

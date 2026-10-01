@@ -29,6 +29,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('**/bun.lock') }}
       - run: bun install
       - run: bun typecheck
-      - run: bun check
+      - run: bun lint
+      - run: bun format:check
       - run: bun test
       - run: hk check --all

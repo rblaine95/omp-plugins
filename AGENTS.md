@@ -25,7 +25,8 @@ extensions/<name>/     one workspace member per extension
 ```sh
 bun install           # link workspace members + dev-only types
 bun test              # all member tests
-bun check             # Biome check
+bun lint              # oxlint (--deny-warnings); bun lint:fix applies safe fixes
+bun format            # oxfmt; bun format:check verifies without writing
 bun sort-package-json # Sort package.json files
 bun typecheck         # tsc --noEmit
 ```
@@ -34,8 +35,13 @@ bun typecheck         # tsc --noEmit
 
 - **`@oh-my-pi/pi-coding-agent` is dev-only** — import with `import type` only, so it
   erases and git-install consumers pull zero runtime deps.
-- **Strict TypeScript** (`strict` + `noUnused*`, `noUncheckedIndexedAccess`, …). Don't
-  loosen `tsconfig.json`; write to satisfy it.
+- **Strict TypeScript** (`strict` + `noUnused*`, `noUncheckedIndexedAccess`,
+  `exactOptionalPropertyTypes`, …). Don't loosen `tsconfig.json`; write to satisfy it.
+- **Lint is pedantic; fix findings, never suppress them.** `.oxlintrc.json` enables the
+  `correctness`, `suspicious`, `pedantic` and `perf` categories. No `oxlint-disable`
+  comments. When a suggested fix would change behavior, write an equivalent that passes.
+  Format with `bun format`, not Biome or Prettier via `bunx`; `.oxfmtrc.json` leaves
+  Markdown and `package.json` alone (release-please and `sort-package-json` own those).
 - **Colocate `bun:test`** and **export pure helpers** so logic is tested without a live
   session (see `rules-guard`'s `decide`/`buildPolicy`). Fail closed on security paths.
 

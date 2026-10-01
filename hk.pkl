@@ -5,11 +5,16 @@ import "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Builtins.
 
 local linters = new Mapping<String, Step> {
   // https://hk.jdx.dev/builtins.html
-  // Lint JS/TS Files
-  ["biome"] = (Builtins.biome) {
-    exclude = List(".vscode/*.json", ".zed/*.json")
-    check = "bun biome check --error-on-warnings --no-errors-on-unmatched {{ files }}"
-    fix = "bun biome check --write --error-on-warnings --no-errors-on-unmatched {{ files }}"
+  // Lint JS/TS files
+  ["oxlint"] = (Builtins.ox_lint) {
+    check = "bun oxlint --deny-warnings {{ files }}"
+    fix = "bun oxlint --deny-warnings --fix {{ files }}"
+  }
+  // Format JS/TS, JSON, YAML, and TOML files (`.oxfmtrc.json` sets the ignores)
+  ["oxfmt"] = (Builtins.oxfmt) {
+    check = "bun oxfmt --check --no-error-on-unmatched-pattern {{ files }}"
+    check_diff = "hk util format-diff {{ files }} -- bun oxfmt --stdin-filepath {}"
+    fix = "bun oxfmt --write --no-error-on-unmatched-pattern {{ files }}"
   }
   // Detect accidentally committed private keys
   ["detect_private_key"] = (Builtins.detect_private_key) {

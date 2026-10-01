@@ -8,14 +8,18 @@
     "extensions/*"
   ],
   "scripts": {
-    "check": "biome check",
     "clean": "rm -rf node_modules",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --deny-warnings",
+    "lint:fix": "oxlint --deny-warnings --fix",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.14",
     "@oh-my-pi/pi-coding-agent": "^18.4.8",
     "@types/bun": "1.4.2",
+    "oxfmt": "^0.71.0",
+    "oxlint": "^1.86.0",
     "sort-package-json": "^4.0.0",
     "typescript": "^7.0.2"
   },
