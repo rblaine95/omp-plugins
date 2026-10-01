@@ -63,7 +63,6 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 export const EMBEDDED_DENY: string[] = [
   "Bash(git push --force *)",
   "Bash(git reset --hard *)",
-  "Bash(rm -rf *)",
   "Edit(~/.bashrc)",
   "Edit(~/.zshrc)",
   "Read(**/*.id_ed25519)",
@@ -460,6 +459,26 @@ function bashSegments(cmd: string): string[] {
   return out;
 }
 
+/** True when a command segment runs `rm` recursively, however the flags are
+ *  spelled: `-rf`, `-fr`, `-R`, `-r -f`, `--recursive` (or an abbreviation), or a
+ *  flag after the operands. `/bin/rm` and `\rm` count as `rm`. Exported for tests. */
+export function isRecursiveRm(segment: string): boolean {
+  const [cmd = "", ...args] = segment
+    .split(/\s+/)
+    .map((t) => t.replace(/["']/g, ""));
+  if (nodePath.basename(cmd.replace(/^\\/, "")) !== "rm") return false;
+  for (const a of args) {
+    if (a === "--") break;
+    if (a.startsWith("--")) {
+      if (a.length > 2 && "recursive".startsWith(a.slice(2))) return true;
+    } else if (a.startsWith("-") && /[rR]/.test(a)) return true;
+  }
+  return false;
+}
+
+const RECURSIVE_RM_MSG =
+  "Blocked: recursive `rm` deletes files permanently. Use `trash <path>` instead, so the User can restore them. If `trash` is not installed or the deletion must be permanent, ask the User.";
+
 /** Most-specific matching deny glob for these candidate paths, unless some
  *  matching allow glob is STRICTLY more specific (→ permitted, undefined). Ties
  *  resolve to deny. Exported for tests. */
@@ -526,7 +545,7 @@ export function decide(
     if (hit) return { block: true, reason: fileMsg(raw, hit.src) };
   }
 
-  // Command / code fields (bash/python/eval/browser/...): first denied-command
+  // Command / code fields (bash/python/eval/...): recursive `rm`, denied-command
   // patterns, then a path-token scan. Shell/code can BOTH read and write, and the
   // scan can't tell which, so it checks read- AND write-class denies
   // (includeWrite = true) — a Write(...)-only deny (e.g. `Edit(~/.bashrc)`) is thus
@@ -536,6 +555,7 @@ export function decide(
   const shellText = fieldValues(inp, SHELL_FIELDS);
   for (const text of shellText) {
     for (const seg of bashSegments(text)) {
+      if (isRecursiveRm(seg)) return { block: true, reason: RECURSIVE_RM_MSG };
       for (const b of policy.bash) {
         if (b.re.test(seg)) {
           return {

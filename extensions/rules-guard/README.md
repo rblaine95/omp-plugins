@@ -41,7 +41,7 @@ Rules use Claude's `Tool(pattern)` form:
       "Read(**/.ssh/**)",     // ... or ssh material
       "Read(**/*.pem)",       // ... or private keys
       "Write(**/.env*)",      // no tool may write them either
-      "Bash(rm -rf *)",       // command patterns are matched too
+      "Bash(git reset --hard *)", // command patterns are matched too
       "Bash(git push --force *)"
     ],
     "allow": [
@@ -62,8 +62,18 @@ code execution. Paths are resolved (`~`, cwd), read selectors (`:50-100`, `:raw`
 stripped, and archive members (`a.zip:secrets/k`) are decomposed so each piece is checked.
 
 Denied bash command patterns. `Bash(...)` rules are matched against each command segment
-of a shell-command field (`command`, `cmd`, `script`), so `rm -rf *` or `git push --force`
-is blocked in `bash` and any other tool that carries such a field.
+of a shell-command field (`command`, `cmd`, `script`), so `git push --force` is blocked in
+`bash` and any other tool that carries such a field. A pattern matches literal text, so
+`Bash(git push --force *)` does not catch `git push -f`.
+
+Recursive `rm`, built in. Literal patterns are too easy to sidestep for `rm`
+(`rm -fr`, `rm -r -f`, `/bin/rm -rf`), so the guard parses the command instead. Any
+`rm` call with `-r`, `-R`, a short-flag group that contains either, or `--recursive`
+is blocked, before or after the operands and with or without `-f`. The block message
+tells the model to use `trash <path>` instead, so the deleted files are recoverable,
+and to ask the user when `trash` is unavailable. Plain `rm file` and `rm -f file` are
+still allowed. The check reads the command word only, so `xargs rm -r` or
+`bash -c "rm -r x"` get through.
 
 Secret-shaped text redaction, as defense in depth. It runs in two passes — `tool_result`
 for tool output (patched at record time) and `context` for messages on their way to the

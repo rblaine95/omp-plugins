@@ -18,6 +18,7 @@ import rulesGuard, {
   EMBEDDED_DENY,
   fileVerdict,
   globSpecificity,
+  isRecursiveRm,
   loadPolicyEntries,
   type Policy,
   parseRule,
@@ -179,13 +180,14 @@ describe("bare or empty allow never widens a deny", () => {
 
 describe("bash deny is final — allow cannot override", () => {
   const pol = buildPolicy(
-    ["Bash(rm -rf *)"],
-    ["Bash(rm -rf /tmp/x)", "Bash(rm -rf *)"],
+    ["Bash(git push --force *)"],
+    ["Bash(git push --force origin x)", "Bash(git push --force *)"],
   );
   test("matching command is blocked despite a more-specific bash allow", () => {
     expect(pol.bash).toHaveLength(1);
     expect(
-      decide("bash", { command: "rm -rf /tmp/x" }, "/work", pol).block,
+      decide("bash", { command: "git push --force origin x" }, "/work", pol)
+        .block,
     ).toBe(true);
   });
 });
@@ -367,13 +369,13 @@ describe("decide — path fields across tool classes", () => {
 });
 
 describe("decide — shell & code fields", () => {
-  const pol = buildPolicy(["Bash(rm -rf *)", "Read(**/.ssh/**)"], []);
+  const pol = buildPolicy(["Bash(git push --force *)", "Read(**/.ssh/**)"], []);
   test("denied bash pattern blocks after stripping sudo/env prefixes", () => {
     expect(
-      decide("bash", { command: "sudo rm -rf /tmp/x" }, "/w", pol).block,
+      decide("bash", { command: "sudo git push --force o" }, "/w", pol).block,
     ).toBe(true);
     expect(
-      decide("bash", { command: "A=1 rm -rf /tmp/x" }, "/w", pol).block,
+      decide("bash", { command: "A=1 git push --force o" }, "/w", pol).block,
     ).toBe(true);
     expect(decide("bash", { command: "ls -la" }, "/w", pol).block).toBe(false);
   });
@@ -386,6 +388,54 @@ describe("decide — shell & code fields", () => {
       decide("eval", { code: "open('~/.ssh/id_ed25519')" }, "/home/test", pol)
         .block,
     ).toBe(true);
+  });
+});
+
+describe("isRecursiveRm — every recursive spelling, no false positives", () => {
+  test.each([
+    "rm -rf /tmp/x",
+    "rm -fr /tmp/x",
+    "rm -Rf /tmp/x",
+    "rm -rfv /tmp/x",
+    "rm -r -f /tmp/x",
+    "rm -r /tmp/x",
+    "rm --recursive --force /tmp/x",
+    "rm --recur /tmp/x",
+    "rm /tmp/x -rf",
+    "/bin/rm -rf /tmp/x",
+    "\\rm -rf /tmp/x",
+    "rm '-rf' /tmp/x",
+  ])("blocks %p", (seg) => {
+    expect(isRecursiveRm(seg)).toBe(true);
+  });
+  test.each([
+    "rm /tmp/x",
+    "rm -f /tmp/x",
+    "rm -- -r",
+    "rm --force /tmp/x",
+    "rmdir -p /tmp/x",
+    "farm -r x",
+    "grep -r rm .",
+    "trash -r /tmp/x",
+  ])("allows %p", (seg) => {
+    expect(isRecursiveRm(seg)).toBe(false);
+  });
+});
+
+describe("decide — recursive rm is blocked with no policy rule", () => {
+  const empty = buildPolicy([], []);
+  test.each(["rm -fr /tmp/x", "sudo rm -r /tmp/x", "ls && /bin/rm -Rf /tmp/x"])(
+    "%p is blocked and points at trash",
+    (command) => {
+      const d = decide("bash", { command }, "/w", empty);
+      expect(d.block).toBe(true);
+      expect(d.reason).toContain("`trash <path>`");
+    },
+  );
+  test("plain rm of a file stays allowed", () => {
+    expect(decide("bash", { command: "rm /tmp/x" }, "/w", empty).block).toBe(
+      false,
+    );
   });
 });
 
