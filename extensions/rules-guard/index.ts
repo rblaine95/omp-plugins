@@ -443,30 +443,65 @@ function fileMsg(target: string, src: string): string {
   return `Blocked by deny policy: "${target}" matches \`${src}\`. This is a protected secret/credential path — ask the User to fetch it; do not read, write, or reference it.`;
 }
 
-function bashSegments(cmd: string): string[] {
-  const out: string[] = [];
-  for (const raw of cmd.split(/\n|;|&&|\|\||[|&]/)) {
-    let p = raw.trim();
-    for (;;) {
-      const m =
-        /^(?:sudo|command|builtin|exec|time|nice|nohup)\s+/.exec(p) ||
-        /^[A-Za-z_]\w*=[^\s]*\s+/.exec(p);
-      if (!m) break;
-      p = p.slice(m[0].length);
-    }
-    if (p) out.push(p);
+const SHELL_PREFIX = /^(?:sudo|command|builtin|exec|time|nice|nohup)$/;
+const ENV_ASSIGN = /^[A-Za-z_]\w*=/;
+
+/** Split shell text into simple commands, each as its words with quotes and
+ *  escapes removed. Only an unquoted `;`, `&`, `|` or newline ends a command, so
+ *  a quoted `;` or `--` stays inside its word. A word that holds whitespace or a
+ *  separator (the script in `bash -c "..."`) is also parsed as commands of its
+ *  own, so the guard still sees what it runs. Leading `sudo`/`env`-assignment
+ *  prefixes are dropped. Exported for tests. */
+export function shellCommands(text: string): string[][] {
+  const out: string[][] = [];
+  const nested: string[] = [];
+  let words: string[] = [];
+  let word: string | undefined; // undefined = between words
+  let quote = "";
+  const add = (s: string): void => {
+    word = (word ?? "") + s;
+  };
+  const endWord = (): void => {
+    if (word === undefined) return;
+    words.push(word);
+    if (/[\s;&|]/.test(word)) nested.push(word);
+    word = undefined;
+  };
+  const endCommand = (): void => {
+    endWord();
+    const start = words.findIndex(
+      (w) => !SHELL_PREFIX.test(w) && !ENV_ASSIGN.test(w),
+    );
+    if (start >= 0) out.push(words.slice(start));
+    words = [];
+  };
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charAt(i);
+    if (quote === "'") {
+      if (c === "'") quote = "";
+      else add(c);
+    } else if (c === "\\" && (!quote || /["\\$`]/.test(text.charAt(i + 1)))) {
+      add(text.charAt(++i));
+    } else if (quote === '"') {
+      if (c === '"') quote = "";
+      else add(c);
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      add("");
+    } else if (/[;&|\n]/.test(c)) endCommand();
+    else if (/\s/.test(c)) endWord();
+    else add(c);
   }
+  endCommand();
+  for (const w of nested) out.push(...shellCommands(w));
   return out;
 }
 
-/** True when a command segment runs `rm` recursively, however the flags are
+/** True when a parsed command runs `rm` recursively, however the flags are
  *  spelled: `-rf`, `-fr`, `-R`, `-r -f`, `--recursive` (or an abbreviation), or a
- *  flag after the operands. `/bin/rm` and `\rm` count as `rm`. Exported for tests. */
-export function isRecursiveRm(segment: string): boolean {
-  const [cmd = "", ...args] = segment
-    .split(/\s+/)
-    .map((t) => t.replace(/["']/g, ""));
-  if (nodePath.basename(cmd.replace(/^\\/, "")) !== "rm") return false;
+ *  flag after the operands. `/bin/rm` counts as `rm`. Exported for tests. */
+export function isRecursiveRm([cmd = "", ...args]: string[]): boolean {
+  if (nodePath.basename(cmd) !== "rm") return false;
   for (const a of args) {
     if (a === "--") break;
     if (a.startsWith("--")) {
@@ -478,6 +513,17 @@ export function isRecursiveRm(segment: string): boolean {
 
 const RECURSIVE_RM_MSG =
   "Blocked: recursive `rm` deletes files permanently. Use `trash <path>` instead, so the User can restore them. If `trash` is not installed or the deletion must be permanent, ask the User.";
+
+/** Block reason for one parsed command, or undefined when it may run. */
+function commandVerdict(words: string[], policy: Policy): string | undefined {
+  if (isRecursiveRm(words)) return RECURSIVE_RM_MSG;
+  const seg = words.join(" ");
+  const hit = policy.bash.find((b) => b.re.test(seg));
+  return (
+    hit &&
+    `Blocked by deny policy: command matches \`${hit.src}\`. This operation is not permitted — ask the User.`
+  );
+}
 
 /** Most-specific matching deny glob for these candidate paths, unless some
  *  matching allow glob is STRICTLY more specific (→ permitted, undefined). Ties
@@ -554,16 +600,9 @@ export function decide(
   // still permits it.
   const shellText = fieldValues(inp, SHELL_FIELDS);
   for (const text of shellText) {
-    for (const seg of bashSegments(text)) {
-      if (isRecursiveRm(seg)) return { block: true, reason: RECURSIVE_RM_MSG };
-      for (const b of policy.bash) {
-        if (b.re.test(seg)) {
-          return {
-            block: true,
-            reason: `Blocked by deny policy: command matches \`${b.src}\`. This operation is not permitted — ask the User.`,
-          };
-        }
-      }
+    for (const words of shellCommands(text)) {
+      const reason = commandVerdict(words, policy);
+      if (reason) return { block: true, reason };
     }
   }
   for (const text of [...shellText, ...fieldValues(inp, CODE_FIELDS)]) {

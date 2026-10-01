@@ -25,6 +25,7 @@ import rulesGuard, {
   pathTokens,
   redactMessages,
   redactText,
+  shellCommands,
 } from "./index";
 
 const HOME = "/home/test";
@@ -391,6 +392,25 @@ describe("decide — shell & code fields", () => {
   });
 });
 
+describe("shellCommands — quote-aware command and word splitting", () => {
+  test("quoted separators and `--` stay inside their word", () => {
+    expect(shellCommands(`A=1 sudo rm "a;b" 'c -- d' \\-e; ls | wc`)).toEqual([
+      ["rm", "a;b", "c -- d", "-e"],
+      ["ls"],
+      ["wc"],
+      ["a"],
+      ["b"],
+      ["c", "--", "d"],
+    ]);
+  });
+  test("a quoted script is parsed as nested commands", () => {
+    expect(shellCommands(`bash -c "ls; git push"`)).toContainEqual([
+      "git",
+      "push",
+    ]);
+  });
+});
+
 describe("isRecursiveRm — every recursive spelling, no false positives", () => {
   test.each([
     "rm -rf /tmp/x",
@@ -405,8 +425,11 @@ describe("isRecursiveRm — every recursive spelling, no false positives", () =>
     "/bin/rm -rf /tmp/x",
     "\\rm -rf /tmp/x",
     "rm '-rf' /tmp/x",
+    'rm "a -- b" -rf /tmp/x',
+    'rm "a;b" -rf',
+    'bash -c "rm -r /tmp/x"',
   ])("blocks %p", (seg) => {
-    expect(isRecursiveRm(seg)).toBe(true);
+    expect(shellCommands(seg).some(isRecursiveRm)).toBe(true);
   });
   test.each([
     "rm /tmp/x",
@@ -418,20 +441,23 @@ describe("isRecursiveRm — every recursive spelling, no false positives", () =>
     "grep -r rm .",
     "trash -r /tmp/x",
   ])("allows %p", (seg) => {
-    expect(isRecursiveRm(seg)).toBe(false);
+    expect(shellCommands(seg).some(isRecursiveRm)).toBe(false);
   });
 });
 
 describe("decide — recursive rm is blocked with no policy rule", () => {
   const empty = buildPolicy([], []);
-  test.each(["rm -fr /tmp/x", "sudo rm -r /tmp/x", "ls && /bin/rm -Rf /tmp/x"])(
-    "%p is blocked and points at trash",
-    (command) => {
-      const d = decide("bash", { command }, "/w", empty);
-      expect(d.block).toBe(true);
-      expect(d.reason).toContain("`trash <path>`");
-    },
-  );
+  test.each([
+    "rm -fr /tmp/x",
+    "sudo rm -r /tmp/x",
+    "ls && /bin/rm -Rf /tmp/x",
+    'rm "a -- b" -rf /tmp/x',
+    'rm "a;b" -rf',
+  ])("%p is blocked and points at trash", (command) => {
+    const d = decide("bash", { command }, "/w", empty);
+    expect(d.block).toBe(true);
+    expect(d.reason).toContain("`trash <path>`");
+  });
   test("plain rm of a file stays allowed", () => {
     expect(decide("bash", { command: "rm /tmp/x" }, "/w", empty).block).toBe(
       false,

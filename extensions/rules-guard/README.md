@@ -61,10 +61,12 @@ bytes; write-class denies apply additionally to write tools, unknown tools, and 
 code execution. Paths are resolved (`~`, cwd), read selectors (`:50-100`, `:raw`) are
 stripped, and archive members (`a.zip:secrets/k`) are decomposed so each piece is checked.
 
-Denied bash command patterns. `Bash(...)` rules are matched against each command segment
-of a shell-command field (`command`, `cmd`, `script`), so `git push --force` is blocked in
-`bash` and any other tool that carries such a field. A pattern matches literal text, so
-`Bash(git push --force *)` does not catch `git push -f`.
+Denied bash command patterns. The guard splits each shell-command field (`command`,
+`cmd`, `script`) into commands on unquoted `;`, `&`, `|` and newlines, removes quotes, and
+matches `Bash(...)` rules against each command. So `git push --force` is blocked in `bash`
+and any other tool that carries such a field. Quoted text that holds whitespace or a
+separator, such as the script in `bash -c "..."`, is checked as commands too. A pattern
+matches literal text, so `Bash(git push --force *)` does not catch `git push -f`.
 
 Recursive `rm`, built in. Literal patterns are too easy to sidestep for `rm`
 (`rm -fr`, `rm -r -f`, `/bin/rm -rf`), so the guard parses the command instead. Any
@@ -72,8 +74,8 @@ Recursive `rm`, built in. Literal patterns are too easy to sidestep for `rm`
 is blocked, before or after the operands and with or without `-f`. The block message
 tells the model to use `trash <path>` instead, so the deleted files are recoverable,
 and to ask the user when `trash` is unavailable. Plain `rm file` and `rm -f file` are
-still allowed. The check reads the command word only, so `xargs rm -r` or
-`bash -c "rm -r x"` get through.
+still allowed. The check reads the command word only, so `xargs rm -r`,
+`find -exec rm -r` and `env rm -r` get through.
 
 Secret-shaped text redaction, as defense in depth. It runs in two passes — `tool_result`
 for tool output (patched at record time) and `context` for messages on their way to the
