@@ -375,13 +375,17 @@ export function candidateAbsPaths(raw: string, cwd: string): string[] {
  * dot). This blocks `cat .env`, `open('.env')`, `~/.ssh/id_ed25519`, `./x.key`,
  * `secrets/p.json`, while leaving ordinary code like `process.env` or `obj.key`
  * untouched. Bare `server.key` (no separator) is deliberately not flagged here.
+ * A leading-dot token glued to a preceding `(` or `|` is expression syntax, not
+ * a path (jq's `select(.key|...)`, `"\(.key)"`), so it gets no dotfile signal.
  */
 export function pathTokens(text: string): string[] {
   const out: string[] = [];
-  for (let t of text.split(/[\s,;|&()<>'"`=]+/u)) {
-    t = t.replaceAll(/^[([{]+|[)\]};,]+$/gu, "");
+  for (const m of text.matchAll(/[^\s,;|&()<>'"`=]+/gu)) {
+    const t = m[0].replaceAll(/^[([{]+|[)\]};,]+$/gu, "");
     if (!t) continue;
-    if (t.includes("/") || t.startsWith("~") || /^\.[^./]/u.test(t)) out.push(t);
+    const prev = text[m.index - 1];
+    const dotfile = /^\.[^./]/u.test(t) && prev !== "(" && prev !== "|";
+    if (t.includes("/") || t.startsWith("~") || dotfile) out.push(t);
   }
   return out;
 }
