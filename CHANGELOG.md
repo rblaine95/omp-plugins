@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3](https://github.com/rblaine95/omp-plugins/compare/v1.1.2...v1.1.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **rules-guard:** ignore jq fields in path scan ([#34](https://github.com/rblaine95/omp-plugins/issues/34)) ([3eaab9e](https://github.com/rblaine95/omp-plugins/commit/3eaab9e12b1c52d8e4a14fa19d4ce7112b721b07))
+
 ## [1.1.2](https://github.com/rblaine95/omp-plugins/compare/v1.1.1...v1.1.2) (2026-10-01)
 
 
