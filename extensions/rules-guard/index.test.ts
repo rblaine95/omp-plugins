@@ -306,9 +306,10 @@ describe("pathTokens (path-signal extraction)", () => {
   test("leaves ordinary code identifiers untouched (negative)", () => {
     expect(pathTokens("process.env obj.key foo bar")).toEqual([]);
   });
-  test("jq field access after ( or | is not a dotfile; shell dotfiles still are", () => {
+  test("quoted jq field access after ( or | is not a dotfile; unquoted still is", () => {
     expect(pathTokens(`jq -r 'select(.key|endswith("x")) | "\\(.key)"'`)).toEqual([]);
     expect(pathTokens("cat .key|head; (cat .env)")).toEqual([".key", ".env"]);
+    expect(pathTokens("echo x|.env; (.env)")).toEqual([".env", ".env"]);
   });
 });
 

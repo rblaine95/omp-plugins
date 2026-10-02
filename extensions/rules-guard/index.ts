@@ -375,16 +375,30 @@ export function candidateAbsPaths(raw: string, cwd: string): string[] {
  * dot). This blocks `cat .env`, `open('.env')`, `~/.ssh/id_ed25519`, `./x.key`,
  * `secrets/p.json`, while leaving ordinary code like `process.env` or `obj.key`
  * untouched. Bare `server.key` (no separator) is deliberately not flagged here.
- * A leading-dot token glued to a preceding `(` or `|` is expression syntax, not
- * a path (jq's `select(.key|...)`, `"\(.key)"`), so it gets no dotfile signal.
+ * A leading-dot token inside quotes and glued to a preceding `(` or `|` is
+ * expression syntax, not a path (jq's `'select(.key|...)'`, `"\(.key)"`), so it
+ * gets no dotfile signal. Unquoted, `|.env` or `(.env)` is still flagged.
  */
 export function pathTokens(text: string): string[] {
   const out: string[] = [];
+  let quote = "";
+  let i = 0;
   for (const m of text.matchAll(/[^\s,;|&()<>'"`=]+/gu)) {
+    // Track shell quote state up to this token's start.
+    for (; i < m.index; i++) {
+      const c = text.charAt(i);
+      if (quote === "'") {
+        if (c === "'") quote = "";
+      } else if (c === "\\") i++;
+      else if (quote === '"') {
+        if (c === '"') quote = "";
+      } else if (c === "'" || c === '"') quote = c;
+    }
     const t = m[0].replaceAll(/^[([{]+|[)\]};,]+$/gu, "");
     if (!t) continue;
     const prev = text[m.index - 1];
-    const dotfile = /^\.[^./]/u.test(t) && prev !== "(" && prev !== "|";
+    const expr = quote !== "" && (prev === "(" || prev === "|");
+    const dotfile = /^\.[^./]/u.test(t) && !expr;
     if (t.includes("/") || t.startsWith("~") || dotfile) out.push(t);
   }
   return out;
