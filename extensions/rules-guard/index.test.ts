@@ -156,6 +156,16 @@ describe("specificity example from the request", () => {
   });
 });
 
+describe("a stricter write allow carves out of a write deny", () => {
+  const pol = buildPolicy(["Write(/out/**)"], ["Edit(/out/scratch/**)"]);
+  test("Edit(/out/scratch/**) wins over Write(/out/**)", () => {
+    expect(writeBlocked("/out/scratch/f.txt", pol)).toBe(false);
+  });
+  test("siblings under the broad deny stay blocked", () => {
+    expect(writeBlocked("/out/other.txt", pol)).toBe(true);
+  });
+});
+
 describe("ties resolve to deny (secure default)", () => {
   const pol = buildPolicy(["Read(**/x/secret.txt)"], ["Read(**/x/secret.txt)"]);
   test("equal specificity → blocked", () => {
