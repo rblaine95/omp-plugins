@@ -10,11 +10,12 @@ local linters = new Mapping<String, Step> {
     check = "bun oxlint --deny-warnings {{ files }}"
     fix = "bun oxlint --deny-warnings --fix {{ files }}"
   }
-  // Format JS/TS, JSON, YAML, and TOML files (`.oxfmtrc.json` sets the ignores)
-  ["oxfmt"] = (Builtins.oxfmt) {
-    check = "bun oxfmt --check --no-error-on-unmatched-pattern {{ files }}"
-    check_diff = "hk util format-diff {{ files }} -- bun oxfmt --stdin-filepath {}"
-    fix = "bun oxfmt --write --no-error-on-unmatched-pattern {{ files }}"
+  // Format JS/TS, JSON, YAML, and TOML files (`[fmt]` in `bunfig.toml` sets the ignores).
+  // hk has no `bun fmt` builtin; reuse the oxfmt one for its file globs.
+  ["bun_fmt"] = (Builtins.oxfmt) {
+    check = "bun fmt --check --no-error-on-unmatched-pattern {{ files }}"
+    check_diff = "hk util format-diff {{ files }} -- bun fmt --stdin-filepath {}"
+    fix = "bun fmt --write --no-error-on-unmatched-pattern {{ files }}"
   }
   // Detect accidentally committed private keys
   ["detect_private_key"] = (Builtins.detect_private_key) {

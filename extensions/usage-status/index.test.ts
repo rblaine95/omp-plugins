@@ -6,10 +6,10 @@ import usageStatus, {
   formatReset,
   formatUsageStatus,
   providerLabel,
-  type RowStyle,
   remainingPercent,
-  type UsageReportLike,
+  type RowStyle,
   usageColor,
+  type UsageReportLike,
   windowToken,
 } from "./index";
 

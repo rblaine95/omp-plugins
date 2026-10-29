@@ -9,21 +9,20 @@
   ],
   "scripts": {
     "clean": "rm -rf node_modules",
-    "format": "oxfmt .",
-    "format:check": "oxfmt --check .",
+    "format": "bun fmt",
+    "format:check": "bun fmt --check",
     "lint": "oxlint --deny-warnings",
     "lint:fix": "oxlint --deny-warnings --fix",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@oh-my-pi/pi-coding-agent": "^18.13.1",
+    "@oh-my-pi/pi-coding-agent": "^18.13.3",
     "@types/bun": "1.4.4",
-    "oxfmt": "^0.75.0",
     "oxlint": "^1.90.0",
     "sort-package-json": "^4.1.0",
     "typescript": "^7.0.2"
   },
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.4",
   "omp": {
     "features": {
       "rules-guard": {
