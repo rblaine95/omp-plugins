@@ -26,7 +26,7 @@ extensions/<name>/     one workspace member per extension
 bun install           # link workspace members + dev-only types
 bun test              # all member tests
 bun lint              # oxlint (--deny-warnings); bun lint:fix applies safe fixes
-bun format            # oxfmt; bun format:check verifies without writing
+bun format            # bun fmt; bun format:check verifies without writing
 bun sort-package-json # Sort package.json files
 bun typecheck         # tsc --noEmit
 ```
@@ -40,8 +40,9 @@ bun typecheck         # tsc --noEmit
 - **Lint is pedantic; fix findings, never suppress them.** `.oxlintrc.json` enables the
   `correctness`, `suspicious`, `pedantic` and `perf` categories. No `oxlint-disable`
   comments. When a suggested fix would change behavior, write an equivalent that passes.
-  Format with `bun format`, not Biome or Prettier via `bunx`; `.oxfmtrc.json` leaves
-  Markdown and `package.json` alone (release-please and `sort-package-json` own those).
+  Format with `bun format` (Bun's built-in `bun fmt`), not Biome or Prettier via `bunx`; the
+  `[fmt]` section of `bunfig.toml` leaves Markdown and `package.json` alone (release-please
+  and `sort-package-json` own those).
 - **Colocate `bun:test`** and **export pure helpers** so logic is tested without a live
   session (see `rules-guard`'s `decide`/`buildPolicy`). Fail closed on security paths.
 

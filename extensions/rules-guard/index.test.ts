@@ -22,9 +22,9 @@ import rulesGuard, {
   globSpecificity,
   isRecursiveRm,
   loadPolicyEntries,
-  type Policy,
   parseRule,
   pathTokens,
+  type Policy,
   redactMessages,
   redactText,
   shellCommands,
@@ -153,6 +153,16 @@ describe("specificity example from the request", () => {
   test("siblings under the broad deny stay blocked", () => {
     expect(readBlocked("/foo/bar/other", pol)).toBe(true);
     expect(readBlocked("/foo/bar/sub/deep", pol)).toBe(true);
+  });
+});
+
+describe("a stricter write allow carves out of a write deny", () => {
+  const pol = buildPolicy(["Write(/out/**)"], ["Edit(/out/scratch/**)"]);
+  test("Edit(/out/scratch/**) wins over Write(/out/**)", () => {
+    expect(writeBlocked("/out/scratch/f.txt", pol)).toBe(false);
+  });
+  test("siblings under the broad deny stay blocked", () => {
+    expect(writeBlocked("/out/other.txt", pol)).toBe(true);
   });
 });
 

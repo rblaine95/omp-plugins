@@ -6,10 +6,10 @@ import usageStatus, {
   formatReset,
   formatUsageStatus,
   providerLabel,
-  type RowStyle,
   remainingPercent,
-  type UsageReportLike,
+  type RowStyle,
   usageColor,
+  type UsageReportLike,
   windowToken,
 } from "./index";
 
@@ -381,6 +381,25 @@ describe("formatUsageStatus multi-account", () => {
     ];
     expect(formatUsageStatus(reports, NOW)).toBe("Claude 5h 40%");
   });
+
+  test("falls back to account id, then project id, then a generic label", () => {
+    const reports: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        metadata: { accountId: "acc-1" },
+        limits: [limit({ windowId: "5h", remainingFraction: 0.1 })],
+      },
+      {
+        provider: "anthropic",
+        metadata: { email: "", projectId: "proj-9" },
+        limits: [limit({ windowId: "5h", remainingFraction: 0.2 })],
+      },
+      { provider: "anthropic", limits: [limit({ windowId: "5h", remainingFraction: 0.3 })] },
+    ];
+    expect(formatUsageStatus(reports, NOW)).toBe(
+      "Claude:acc-1 5h 10%  |  Claude:acct 5h 30%  |  Claude:proj-9 5h 20%",
+    );
+  });
 });
 
 type Handler = (event: unknown, ctx: unknown) => void;
@@ -598,6 +617,65 @@ describe("usageStatus resilience", () => {
       expect(c.render(200)).toEqual([]);
     } finally {
       handlers["session_shutdown"]?.({}, ctx);
+    }
+  });
+});
+
+describe("usageStatus host failures", () => {
+  test("tolerates a host whose setWidget throws", () => {
+    const handlers: Record<string, Handler> = {};
+    let attempts = 0;
+    const ctx = {
+      ...uiCtx({ reports: [], widgetCalls: [] }),
+      ui: {
+        setWidget: () => {
+          attempts++;
+          throw new Error("component widgets unsupported");
+        },
+      },
+    } as unknown as ExtensionContext;
+    usageStatus(fakePi(handlers));
+    try {
+      expect(() => handlers["session_start"]?.({}, ctx)).not.toThrow();
+    } finally {
+      expect(() => handlers["session_shutdown"]?.({}, ctx)).not.toThrow();
+    }
+    // Install and clear were both attempted.
+    expect(attempts).toBe(2);
+  });
+
+  test("keeps the cached reports when a refetch fails", async () => {
+    jest.useFakeTimers();
+    const handlers: Record<string, Handler> = {};
+    const widgetCalls: unknown[] = [];
+    const responses = [
+      Promise.resolve(codex(limit({ windowId: "5h", remainingFraction: 0.7 }))),
+      Promise.reject(new Error("network down")),
+    ];
+    const ctx = {
+      ...uiCtx({ reports: [], widgetCalls }),
+      modelRegistry: {
+        getProviderBaseUrl: () => {},
+        authStorage: { usage: { reports: () => responses.shift() } },
+      },
+    } as unknown as ExtensionContext;
+    usageStatus(fakePi(handlers));
+    try {
+      handlers["session_start"]?.({}, ctx);
+      const c = (widgetCalls[0] as [string, WidgetFactory, unknown])[1](
+        { requestRender() {} },
+        FAKE_THEME,
+      );
+      await flushMicrotasks();
+      expect(c.render(200)).toEqual(["Codex 5h 70%"]);
+      // Past the network TTL, the next tick refetches and the fetch rejects.
+      jest.advanceTimersByTime(5 * MIN);
+      await flushMicrotasks();
+      expect(responses).toHaveLength(0);
+      expect(c.render(200)).toEqual(["Codex 5h 70%"]);
+    } finally {
+      handlers["session_shutdown"]?.({}, ctx);
+      jest.useRealTimers();
     }
   });
 });
