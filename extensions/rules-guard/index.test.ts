@@ -710,7 +710,7 @@ describe("rulesGuard wiring — tool_call", () => {
     rulesGuard(pi);
     const onCall = must(handlers.get("tool_call"));
     const hit = (await onCall(
-      { toolName: "bash", input: { command: "rm -rf /tmp/x" } },
+      { toolName: "bash", input: { command: "rm -rf /work/x" } },
       { cwd: "/work" },
     )) as { block?: boolean } | undefined;
     expect(hit?.block).toBe(true);
