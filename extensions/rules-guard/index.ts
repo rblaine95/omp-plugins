@@ -503,10 +503,11 @@ export function isRecursiveRm([cmd = "", ...args]: string[]): boolean {
 }
 
 /** Real paths of the system temp directories: `/tmp` and `os.tmpdir()`
- *  (`$TMPDIR`, where `mktemp -d` writes on macOS). Missing ones are skipped. */
-function tempRoots(): string[] {
+ *  (`$TMPDIR`, where `mktemp -d` writes on macOS). Missing ones are skipped.
+ *  Exported for tests. */
+export function tempRoots(dirs: string[] = ["/tmp", os.tmpdir()]): string[] {
   const roots = new Set<string>();
-  for (const dir of ["/tmp", os.tmpdir()]) {
+  for (const dir of dirs) {
     try {
       roots.add(fs.realpathSync(dir));
     } catch {

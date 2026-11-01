@@ -29,6 +29,7 @@ import rulesGuard, {
   redactText,
   rmOnlyInside,
   shellCommands,
+  tempRoots,
 } from "./index";
 
 const HOME = "/home/test";
@@ -482,6 +483,11 @@ describe("rmOnlyInside — temp-directory exemption fails closed", () => {
     "rm -rf R/{a,b}",
   ])("blocks %p", (cmd) => {
     expect(inside(cmd)).toBe(false);
+  });
+  test("tempRoots resolves symlinked roots (macOS /tmp) and skips missing ones", () => {
+    expect(tempRoots([nodePath.join(root, "link"), nodePath.join(base, "missing")])).toEqual([
+      outside,
+    ]);
   });
 });
 
