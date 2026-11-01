@@ -74,8 +74,9 @@ Recursive `rm`, built in. Literal patterns are too easy to sidestep for `rm`
 is blocked, before or after the operands and with or without `-f`. The one exception is
 a call whose operands are all absolute paths inside the system temp directory (`/tmp`
 or `$TMPDIR`), checked after resolving symlinks and `..`. Operands that the shell could
-still rewrite (`$`, backticks, braces, a glob outside the last path segment) are always
-blocked. The block message tells the model to move files to the trash instead
+still rewrite (`$`, backticks, braces, a glob outside the last path segment, a glob
+directly in the temp directory such as `/tmp/*`) are always blocked. The block message
+tells the model to move files to the trash instead
 (`trash <path>` on macOS, `gio trash <path>` on Linux), so the deleted files are recoverable,
 and to ask the user when neither is available. Plain `rm file` and `rm -f file` are
 still allowed. The check reads the command word only, so `xargs rm -r`,

@@ -461,7 +461,7 @@ describe("rmOnlyInside — temp-directory exemption fails closed", () => {
     "rm -rf R/dir",
     "rm -r R/dir R/new",
     "rm -rf R/dir/",
-    "rm -rf R/d*",
+    "rm -rf R/dir/d*",
     "rm -rf -- R/-weird",
   ])("allows %p", (cmd) => {
     expect(inside(cmd)).toBe(true);
@@ -478,6 +478,8 @@ describe("rmOnlyInside — temp-directory exemption fails closed", () => {
     "rm -rf R/link/x",
     "rm -rf R/link/../x",
     "rm -rf R/*/x",
+    "rm -rf R/*",
+    "rm -rf R/.[!.]*",
     "rm -rf R/$d",
     "rm -rf R/`d`",
     "rm -rf R/{a,b}",

@@ -539,9 +539,10 @@ function realPathPrefix(p: string): string {
 
 /** True when an `rm` call names at least one operand and every operand is an
  *  absolute path strictly inside one of `roots` once symlinks and `..` are
- *  resolved (in that order, as the kernel does). Fails closed on anything the
- *  shell could still rewrite: `$`, backticks, braces, and globs anywhere but the
- *  last path segment. Exported for tests. */
+ *  resolved (in that order, as the kernel does). A glob may only appear in the
+ *  last path segment, and the directory it expands in must itself be strictly
+ *  inside a root, so `/tmp/*` is blocked. Fails closed on anything else the shell
+ *  could still rewrite: `$`, backticks and braces. Exported for tests. */
 export function rmOnlyInside([, ...args]: string[], roots: string[] = TEMP_ROOTS): boolean {
   const dashdash = args.indexOf("--");
   const operands = [
@@ -553,7 +554,7 @@ export function rmOnlyInside([, ...args]: string[], roots: string[] = TEMP_ROOTS
     if (!nodePath.isAbsolute(op) || /[$`{}]/u.test(op)) return false;
     const glob = op.search(/[*?[]/u);
     if (glob !== -1 && op.includes("/", glob)) return false;
-    const real = realPathPrefix(op);
+    const real = realPathPrefix(glob === -1 ? op : nodePath.dirname(op));
     return roots.some((root) => real.startsWith(root + nodePath.sep));
   });
 }
