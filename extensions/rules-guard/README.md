@@ -71,9 +71,14 @@ matches literal text, so `Bash(git push --force *)` does not catch `git push -f`
 Recursive `rm`, built in. Literal patterns are too easy to sidestep for `rm`
 (`rm -fr`, `rm -r -f`, `/bin/rm -rf`), so the guard parses the command instead. Any
 `rm` call with `-r`, `-R`, a short-flag group that contains either, or `--recursive`
-is blocked, before or after the operands and with or without `-f`. The block message
-tells the model to use `trash <path>` instead, so the deleted files are recoverable,
-and to ask the user when `trash` is unavailable. Plain `rm file` and `rm -f file` are
+is blocked, before or after the operands and with or without `-f`. The one exception is
+a call whose operands are all absolute paths inside the system temp directory (`/tmp`
+or `$TMPDIR`), checked after resolving symlinks and `..`. Operands that the shell could
+still rewrite (`$`, backticks, braces, a glob outside the last path segment, a glob
+directly in the temp directory such as `/tmp/*`) are always blocked. The block message
+tells the model to move files to the trash instead
+(`trash <path>` on macOS, `gio trash <path>` on Linux), so the deleted files are recoverable,
+and to ask the user when neither is available. Plain `rm file` and `rm -f file` are
 still allowed. The check reads the command word only, so `xargs rm -r`,
 `find -exec rm -r` and `env rm -r` get through.
 

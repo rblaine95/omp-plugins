@@ -2,7 +2,7 @@
  * rules-guard tests — allow/deny precedence by specificity.
  * Run: `bun test` inside agent/extensions/rules-guard.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
@@ -27,7 +27,9 @@ import rulesGuard, {
   type Policy,
   redactMessages,
   redactText,
+  rmOnlyInside,
   shellCommands,
+  tempRoots,
 } from "./index";
 
 const HOME = "/home/test";
@@ -419,18 +421,75 @@ describe("isRecursiveRm — every recursive spelling, no false positives", () =>
 describe("decide — recursive rm is blocked with no policy rule", () => {
   const empty = buildPolicy([], []);
   test.each([
-    "rm -fr /tmp/x",
-    "sudo rm -r /tmp/x",
-    "ls && /bin/rm -Rf /tmp/x",
-    'rm "a -- b" -rf /tmp/x',
+    "rm -fr /work/x",
+    "sudo rm -r /work/x",
+    "ls && /bin/rm -Rf /work/x",
+    'rm "a -- b" -rf /work/x',
     'rm "a;b" -rf',
+    "cd /tmp && rm -rf x",
   ])("%p is blocked and points at trash", (command) => {
     const d = decide("bash", { command }, "/w", empty);
     expect(d.block).toBe(true);
     expect(d.reason).toContain("`trash <path>`");
+    expect(d.reason).toContain("`gio trash <path>`");
   });
   test("plain rm of a file stays allowed", () => {
-    expect(decide("bash", { command: "rm /tmp/x" }, "/w", empty).block).toBe(false);
+    expect(decide("bash", { command: "rm /work/x" }, "/w", empty).block).toBe(false);
+  });
+  test("recursive rm inside the system temp directory is allowed", () => {
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "rules-guard-"));
+    try {
+      expect(decide("bash", { command: `rm -rf ${dir}` }, "/w", empty).block).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+});
+
+describe("rmOnlyInside — temp-directory exemption fails closed", () => {
+  const base = fs.realpathSync(fs.mkdtempSync(nodePath.join(os.tmpdir(), "rules-guard-")));
+  const root = nodePath.join(base, "root");
+  const outside = nodePath.join(base, "outside");
+  fs.mkdirSync(nodePath.join(root, "dir"), { recursive: true });
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, nodePath.join(root, "link"));
+  afterAll(() => fs.rmSync(base, { recursive: true }));
+  const inside = (cmd: string): boolean =>
+    rmOnlyInside(shellCommands(cmd.replaceAll("R", root))[0] ?? [], [root]);
+
+  test.each([
+    "rm -rf R/dir",
+    "rm -r R/dir R/new",
+    "rm -rf R/dir/",
+    "rm -rf R/dir/d*",
+    "rm -rf -- R/-weird",
+  ])("allows %p", (cmd) => {
+    expect(inside(cmd)).toBe(true);
+  });
+  test.each([
+    "rm -rf R/link",
+    "rm -rf",
+    "rm -rf R",
+    "rm -rf R/.",
+    "rm -rf dir",
+    "rm -rf R/dir ~/x",
+    "rm -rf R/../outside",
+    "rm -rf R/link/",
+    "rm -rf R/link/x",
+    "rm -rf R/link/../x",
+    "rm -rf R/*/x",
+    "rm -rf R/*",
+    "rm -rf R/.[!.]*",
+    "rm -rf R/$d",
+    "rm -rf R/`d`",
+    "rm -rf R/{a,b}",
+  ])("blocks %p", (cmd) => {
+    expect(inside(cmd)).toBe(false);
+  });
+  test("tempRoots resolves symlinked roots (macOS /tmp) and skips missing ones", () => {
+    expect(tempRoots([nodePath.join(root, "link"), nodePath.join(base, "missing")])).toEqual([
+      outside,
+    ]);
   });
 });
 
@@ -659,7 +718,7 @@ describe("rulesGuard wiring — tool_call", () => {
     rulesGuard(pi);
     const onCall = must(handlers.get("tool_call"));
     const hit = (await onCall(
-      { toolName: "bash", input: { command: "rm -rf /tmp/x" } },
+      { toolName: "bash", input: { command: "rm -rf /work/x" } },
       { cwd: "/work" },
     )) as { block?: boolean } | undefined;
     expect(hit?.block).toBe(true);
