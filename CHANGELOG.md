@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/rblaine95/omp-plugins/compare/v1.1.3...v1.2.0) (2026-11-01)
+
+
+### Features
+
+* **rules-guard:** allow recursive rm inside temp dirs ([#42](https://github.com/rblaine95/omp-plugins/issues/42)) ([5397efa](https://github.com/rblaine95/omp-plugins/commit/5397efa18dd4ad091bfc2aba7c6f141e4457d9cc))
+
 ## [1.1.3](https://github.com/rblaine95/omp-plugins/compare/v1.1.2...v1.1.3) (2026-10-02)
 
 
