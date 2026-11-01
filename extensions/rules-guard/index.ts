@@ -502,12 +502,67 @@ export function isRecursiveRm([cmd = "", ...args]: string[]): boolean {
   return false;
 }
 
+/** Real paths of the system temp directories: `/tmp` and `os.tmpdir()`
+ *  (`$TMPDIR`, where `mktemp -d` writes on macOS). Missing ones are skipped. */
+function tempRoots(): string[] {
+  const roots = new Set<string>();
+  for (const dir of ["/tmp", os.tmpdir()]) {
+    try {
+      roots.add(fs.realpathSync(dir));
+    } catch {
+      // No such directory on this system.
+    }
+  }
+  return [...roots];
+}
+
+const TEMP_ROOTS = tempRoots();
+
+/** `p` with symlinks and `..` resolved by the kernel in its longest existing
+ *  prefix; the part that does not exist yet is appended as written. The JS
+ *  `realpathSync` folds `..` before following symlinks, so use `.native`. */
+function realPathPrefix(p: string): string {
+  let head = p;
+  let tail = "";
+  for (;;) {
+    try {
+      return nodePath.join(fs.realpathSync.native(head), tail);
+    } catch {
+      const parent = nodePath.dirname(head);
+      if (parent === head) return p;
+      tail = nodePath.join(nodePath.basename(head), tail);
+      head = parent;
+    }
+  }
+}
+
+/** True when an `rm` call names at least one operand and every operand is an
+ *  absolute path strictly inside one of `roots` once symlinks and `..` are
+ *  resolved (in that order, as the kernel does). Fails closed on anything the
+ *  shell could still rewrite: `$`, backticks, braces, and globs anywhere but the
+ *  last path segment. Exported for tests. */
+export function rmOnlyInside([, ...args]: string[], roots: string[] = TEMP_ROOTS): boolean {
+  const dashdash = args.indexOf("--");
+  const operands = [
+    ...(dashdash === -1 ? args : args.slice(0, dashdash)).filter((a) => !a.startsWith("-")),
+    ...(dashdash === -1 ? [] : args.slice(dashdash + 1)),
+  ];
+  if (operands.length === 0) return false;
+  return operands.every((op) => {
+    if (!nodePath.isAbsolute(op) || /[$`{}]/u.test(op)) return false;
+    const glob = op.search(/[*?[]/u);
+    if (glob !== -1 && op.includes("/", glob)) return false;
+    const real = realPathPrefix(op);
+    return roots.some((root) => real.startsWith(root + nodePath.sep));
+  });
+}
+
 const RECURSIVE_RM_MSG =
-  "Blocked: recursive `rm` deletes files permanently. Use `trash <path>` instead, so the User can restore them. If `trash` is not installed or the deletion must be permanent, ask the User.";
+  "Blocked: recursive `rm` deletes files permanently, so it only runs on absolute paths inside the system temp directory (`/tmp`). Elsewhere, move files to the trash so the User can restore them: `trash <path>` on macOS, `gio trash <path>` on Linux. If neither is available or the deletion must be permanent, ask the User.";
 
 /** Block reason for one parsed command, or undefined when it may run. */
 function commandVerdict(words: string[], policy: Policy): string | undefined {
-  if (isRecursiveRm(words)) return RECURSIVE_RM_MSG;
+  if (isRecursiveRm(words) && !rmOnlyInside(words)) return RECURSIVE_RM_MSG;
   const seg = words.join(" ");
   const hit = policy.bash.find((b) => b.re.test(seg));
   return (
