@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/rblaine95/omp-plugins/compare/v1.2.0...v1.3.0) (2026-11-02)
+
+
+### Features
+
+* **usage-status:** render natively in Tern with bars and hover card ([#44](https://github.com/rblaine95/omp-plugins/issues/44)) ([95e8e56](https://github.com/rblaine95/omp-plugins/commit/95e8e56b67f08915871687979ac438171807065c))
+
 ## [1.2.0](https://github.com/rblaine95/omp-plugins/compare/v1.1.3...v1.2.0) (2026-11-01)
 
 
