@@ -233,7 +233,7 @@ describe("formatUsageStatus styling", () => {
   });
 });
 
-const METERS = { meters: true, hour12: false };
+const METERS = { meters: true, hour12: false, cols: 200 };
 const NATIVE_REPORTS: UsageReportLike[] = [
   ...codex(limit({ windowId: "7d", durationMs: 7 * DAY, remainingFraction: 0.51 })),
   {
@@ -303,7 +303,7 @@ describe("describeUsageStatus row", () => {
 
   test("keeps windows as text where the terminal draws no meters", () => {
     const reports = codex(limit({ windowId: "5h", remainingFraction: 0.4 }));
-    expect(describeUsageStatus(reports, NOW, " · ", { meters: false })).toMatchObject({
+    expect(describeUsageStatus(reports, NOW, " · ", { meters: false, cols: 200 })).toMatchObject({
       c: [
         {
           c: [
@@ -313,6 +313,60 @@ describe("describeUsageStatus row", () => {
         },
       ],
     });
+  });
+});
+
+describe("describeUsageStatus compaction", () => {
+  // Claude 5h 10% (30m) and 7d 70%, plus an Opus-only ("fable") 7d at 5%.
+  const claude: UsageReportLike[] = [
+    {
+      provider: "anthropic",
+      limits: [
+        limit({
+          windowId: "5h",
+          durationMs: 5 * HR,
+          remainingFraction: 0.1,
+          resetsAt: NOW + 30 * MIN,
+        }),
+        limit({ windowId: "7d", durationMs: 7 * DAY, remainingFraction: 0.7, resetsAt: NOW + DAY }),
+        limit({ windowId: "7d", durationMs: 7 * DAY, tier: "fable", remainingFraction: 0.05 }),
+      ],
+    },
+  ];
+  const pieces = (cols: number) => describeUsageStatus(claude, NOW, " · ", { meters: false, cols });
+  const row = (...windows: UsageNode[]) => ({
+    c: [{ key: "Claude", c: [textNode({ t: "Claude", s: "accent" }), ...windows] }],
+  });
+  const dot = textNode({ t: "·", s: "dim" });
+
+  test("folds a tiered meter into its provider, labeled by tier, when it fits", () => {
+    expect(pieces(200)).toMatchObject(
+      row(
+        textNode({ t: "5h " }, { t: "10%", s: "error" }, { t: " " }, { t: "(30m)", s: "dim" }),
+        dot,
+        textNode({ t: "7d " }, { t: "70%", s: "success" }, { t: " " }, { t: "(1d)", s: "dim" }),
+        dot,
+        textNode({ t: "Fable 7d " }, { t: "5%", s: "error" }),
+      ),
+    );
+  });
+
+  test("drops the countdowns first when the row would not fit", () => {
+    expect(pieces(40)).toMatchObject(
+      row(
+        textNode({ t: "5h " }, { t: "10%", s: "error" }),
+        dot,
+        textNode({ t: "7d " }, { t: "70%", s: "success" }),
+        dot,
+        textNode({ t: "Fable 7d " }, { t: "5%", s: "error" }),
+      ),
+    );
+  });
+
+  test("then shows only the provider's lowest window, and stays there when nothing fits", () => {
+    const lowest = row(textNode({ t: "Fable 7d " }, { t: "5%", s: "error" }));
+    expect(pieces(25)).toMatchObject(lowest);
+    expect(pieces(5)).toMatchObject(lowest);
   });
 });
 
@@ -629,9 +683,10 @@ describe("usageStatus wiring", () => {
       // Hides when nothing fits.
       expect(component.render(5)).toEqual([]);
       // Natively, an unchanged description keeps its node identity so Tern skips it.
-      const described = component.describe({ supports: () => true });
+      const cx = { cols: 200, supports: () => true };
+      const described = component.describe(cx);
       expect(described).toMatchObject({ k: "row", c: [{ key: "Claude" }] });
-      expect(component.describe({ supports: () => true })).toBe(described);
+      expect(component.describe(cx)).toBe(described);
     } finally {
       handlers["session_shutdown"]?.({}, ctx);
     }
