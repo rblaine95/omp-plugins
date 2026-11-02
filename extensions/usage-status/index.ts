@@ -549,7 +549,8 @@ function fittedGroups(
     fitted = pieces.map((c, index) => ({
       k: "row",
       key: groups[index]?.label ?? "",
-      p: { gap: "sm", align: "center" },
+      // Wraps only when one provider alone is wider than the pane (lowest level).
+      p: { gap: "sm", align: "center", wrap: true },
       c,
     }));
     const cells =

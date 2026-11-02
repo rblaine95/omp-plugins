@@ -274,7 +274,7 @@ describe("describeUsageStatus row", () => {
         {
           k: "row",
           key: "Claude",
-          p: { gap: "sm", align: "center" },
+          p: { gap: "sm", align: "center", wrap: true },
           c: [
             textNode({ t: "Claude", s: "accent" }),
             textNode({ t: "5h" }),
@@ -289,7 +289,7 @@ describe("describeUsageStatus row", () => {
         {
           k: "row",
           key: "Codex",
-          p: { gap: "sm", align: "center" },
+          p: { gap: "sm", align: "center", wrap: true },
           c: [
             textNode({ t: "Codex", s: "accent" }),
             textNode({ t: "7d" }),
@@ -363,10 +363,11 @@ describe("describeUsageStatus compaction", () => {
     );
   });
 
-  test("then shows only the provider's lowest window, and stays there when nothing fits", () => {
+  test("then shows only the provider's lowest window, wrapping it when even that is too wide", () => {
     const lowest = row(textNode({ t: "Fable 7d " }, { t: "5%", s: "error" }));
     expect(pieces(25)).toMatchObject(lowest);
     expect(pieces(5)).toMatchObject(lowest);
+    expect(pieces(5)).toMatchObject({ c: [{ p: { wrap: true } }] });
   });
 });
 
