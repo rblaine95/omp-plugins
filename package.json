@@ -1,6 +1,6 @@
 {
   "name": "@rblaine95/omp-plugins",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "rblaine95 personal oh-my-pi extensions, installable via `omp plugin install`.",
   "license": "MIT",
