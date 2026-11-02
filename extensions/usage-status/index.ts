@@ -28,7 +28,8 @@
  * In Tern, omp describes components through the Tern Surface Protocol instead of
  * drawing rows. Without a `describe` method the row would fall back to a fixed-
  * width `rows` block in the terminal's own glyphs, so `UsageRow.describe` hands
- * Tern native styled text that it lays out and wraps itself.
+ * Tern native nodes it lays out and wraps itself: each window gets a `meter` bar,
+ * and hovering the row opens a card with every window's share left and reset time.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
@@ -153,8 +154,11 @@ export function remainingPercent(limit: UsageLimitLike): number | undefined {
   return Math.round(Math.min(1, Math.max(0, fraction)) * 100);
 }
 
+/** Theme color, and meter tone, for a remaining share. */
+export type UsageTone = "success" | "warning" | "error";
+
 /** Theme color for a remaining-percent value: green plenty, yellow low, red critical. */
-export function usageColor(remaining: number): string {
+export function usageColor(remaining: number): UsageTone {
   if (remaining <= 20) return "error";
   if (remaining <= 50) return "warning";
   return "success";
@@ -352,39 +356,179 @@ export function formatUsageStatus(
     .join(style.pipe);
 }
 
-/** One entry as a native text node; `key` keeps its identity when entries come and go. */
-interface UsageTextNode {
-  k: "text";
-  key: string;
-  p: { spans: UsageSpan[]; wrap: "none" };
-}
+type CharExtent = `${number}ch`;
 
 /** The structural subset of pi-tui's `NativeNode` (Tern Surface Protocol) this
- *  widget describes: a wrapping row of entries, or a hidden placeholder. */
+ *  widget describes. The hover card is the same shape, as a `TspPropNode`. */
 export type UsageNode =
-  | { k: "row"; p: { gap: "lg"; wrap: true }; c: UsageTextNode[] }
-  | { k: "col"; p: { hidden: true } };
+  | {
+      k: "row";
+      key?: string;
+      p: {
+        gap: "xs" | "sm" | "lg";
+        wrap?: true;
+        align?: "center";
+        justify?: "between";
+        hovercard?: UsageNode;
+      };
+      c: UsageNode[];
+    }
+  | { k: "col"; key?: string; p: { gap?: "xs" | "sm" | "md"; hidden?: true }; c?: UsageNode[] }
+  | { k: "text"; key?: string; p: { spans: UsageSpan[]; wrap: "none" } }
+  | {
+      k: "meter";
+      key?: string;
+      p: {
+        value: number;
+        style: "bar";
+        size: "sm";
+        tone: UsageTone;
+        grow?: number;
+        min?: { w: CharExtent };
+        max?: { w: CharExtent };
+      };
+    };
+
+/** What the description needs from omp's `DescribeContext`. */
+export interface UsageDescribeOptions {
+  /** The terminal draws `meter` nodes; without them the row stays text only. */
+  meters: boolean;
+  /** The user's clock reads 12-hour; undefined leaves it to the locale. */
+  hour12?: boolean | undefined;
+}
 
 const HIDDEN_NODE: UsageNode = { k: "col", p: { hidden: true } };
+/** Width of an inline window bar, in cells. */
+const INLINE_METER: CharExtent = "8ch";
+const CARD_WINDOW_NAMES: Record<string, string> = {
+  "1d": "Daily",
+  "7d": "Weekly",
+  "30d": "Monthly",
+};
 
-/** Native description for Tern: one unwrapped text node per entry in a row the
- *  terminal wraps, so a narrow pane moves whole entries to the next line and the
- *  terminal's gap replaces the pipe separator. Windows keep the dimmed `dot`. */
+function textNode(spans: UsageSpan[]): UsageNode {
+  return { k: "text", p: { spans, wrap: "none" } };
+}
+
+/** Remaining share as a bar, toned like its percent. */
+function meterNode(remaining: number, inline: boolean): UsageNode {
+  const base = {
+    value: remaining / 100,
+    style: "bar",
+    size: "sm",
+    tone: usageColor(remaining),
+  } as const;
+  return {
+    k: "meter",
+    p: inline
+      ? { ...base, min: { w: INLINE_METER }, max: { w: INLINE_METER } }
+      : { ...base, grow: 1 },
+  };
+}
+
+/** A window's name in the card: "5-hour window", "Weekly window". */
+function windowName(limit: UsageLimitLike): string {
+  const token = windowToken(limit);
+  const hours = /^(\d+)h$/u.exec(token)?.[1];
+  return `${CARD_WINDOW_NAMES[token] ?? (hours ? `${hours}-hour` : token)} window`;
+}
+
+/** Local clock time of a reset: the time today, else weekday and time within a
+ *  week, else the date as well. */
+function resetClock(resetsAt: number, now: number, hour12: boolean | undefined): string {
+  const at = new Date(resetsAt);
+  const sameDay = at.toDateString() === new Date(now).toDateString();
+  const withinWeek = resetsAt - now < 6 * 24 * 60 * 60_000;
+  return at.toLocaleString(undefined, {
+    ...(sameDay ? {} : { weekday: "short" }),
+    ...(withinWeek ? {} : { month: "short", day: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+    ...(hour12 === undefined ? {} : { hour12 }),
+  });
+}
+
+/** One window inline: token, bar, percent and countdown. */
+function inlineWindow(limit: UsageLimitLike, now: number, meters: boolean): UsageNode[] {
+  const remaining = remainingPercent(limit) ?? 0;
+  const [token, ...rest] = windowSpans(limit, now, true);
+  if (!meters || !token) return [textNode(windowSpans(limit, now, true))];
+  return [textNode([{ t: token.t.trimEnd() }]), meterNode(remaining, true), textNode(rest)];
+}
+
+/** One entry inline: accent label, then its windows split by a dimmed `dot`. */
+function inlineEntry(entry: UsageEntry, now: number, dot: string, meters: boolean): UsageNode {
+  const children: UsageNode[] = [textNode([{ t: entry.label, s: "accent" }])];
+  for (const [index, window] of entry.windows.entries()) {
+    if (index > 0) children.push(textNode([{ t: dot.trim(), s: "dim" }]));
+    children.push(...inlineWindow(window, now, meters));
+  }
+  return { k: "row", key: entry.label, p: { gap: "sm", align: "center" }, c: children };
+}
+
+/** One window in the card: name and share left, a full-width bar, the reset. */
+function cardWindow(limit: UsageLimitLike, now: number, options: UsageDescribeOptions): UsageNode {
+  const remaining = remainingPercent(limit) ?? 0;
+  const children: UsageNode[] = [
+    {
+      k: "row",
+      p: { gap: "sm", justify: "between" },
+      c: [
+        textNode([{ t: windowName(limit) }]),
+        textNode([
+          { t: `${remaining}%`, s: usageColor(remaining) },
+          { t: " left", s: "dim" },
+        ]),
+      ],
+    },
+  ];
+  if (options.meters) children.push(meterNode(remaining, false));
+  const resetsAt = limit.window?.resetsAt;
+  if (typeof resetsAt === "number" && resetsAt > now) {
+    const clock = resetClock(resetsAt, now, options.hour12);
+    children.push(
+      textNode([{ t: `resets in ${formatReset(resetsAt - now)} · ${clock}`, s: "dim" }]),
+    );
+  }
+  return { k: "col", key: windowToken(limit), p: { gap: "xs" }, c: children };
+}
+
+/** The hover card: every entry with each window's bar, share left and reset time. */
+function usageCard(entries: UsageEntry[], now: number, options: UsageDescribeOptions): UsageNode {
+  return {
+    k: "col",
+    p: { gap: "md" },
+    c: [
+      textNode([{ t: "Usage", s: "strong" }]),
+      ...entries.map((entry): UsageNode => ({
+        k: "col",
+        key: entry.label,
+        p: { gap: "sm" },
+        c: [
+          textNode([{ t: entry.label, s: "accent" }]),
+          ...entry.windows.map((window) => cardWindow(window, now, options)),
+        ],
+      })),
+    ],
+  };
+}
+
+/** Native description for Tern: a wrapping row with one keyed entry per
+ *  provider, so a narrow pane moves whole entries to the next line and the
+ *  terminal's gap replaces the pipe separator. Each window gets a bar where the
+ *  terminal draws meters, and hovering the row opens a card with the details. */
 export function describeUsageStatus(
   reports: readonly UsageReportLike[],
   now: number,
   dot: string,
+  options: UsageDescribeOptions,
 ): UsageNode {
   const entries = usageEntries(reports);
   if (entries.length === 0) return HIDDEN_NODE;
   return {
     k: "row",
-    p: { gap: "lg", wrap: true },
-    c: entries.map((entry) => ({
-      k: "text",
-      key: entry.label,
-      p: { spans: entrySpans(entry, now, true, { t: dot, s: "dim" }), wrap: "none" },
-    })),
+    p: { gap: "lg", wrap: true, hovercard: usageCard(entries, now, options) },
+    c: entries.map((entry) => inlineEntry(entry, now, dot, options.meters)),
   };
 }
 
@@ -431,8 +575,11 @@ class UsageRow {
 
   /** Native node; the same object is returned while the description is
    *  unchanged, which is how the reconciler skips an unchanged component. */
-  describe(): UsageNode {
-    const node = describeUsageStatus(this.reports, Date.now(), this.#dot);
+  describe(cx: { supports(kind: "meter"): boolean; hour12?: boolean }): UsageNode {
+    const node = describeUsageStatus(this.reports, Date.now(), this.#dot, {
+      meters: cx.supports("meter"),
+      hour12: cx.hour12,
+    });
     const signature = JSON.stringify(node);
     if (this.#native?.signature !== signature) this.#native = { signature, node };
     return this.#native.node;

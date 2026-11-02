@@ -10,7 +10,10 @@ import usageStatus, {
   remainingPercent,
   type RowStyle,
   usageColor,
+  type UsageNode,
   type UsageReportLike,
+  type UsageSpan,
+  type UsageTone,
   windowToken,
 } from "./index";
 
@@ -230,63 +233,130 @@ describe("formatUsageStatus styling", () => {
   });
 });
 
-describe("describeUsageStatus", () => {
+const METERS = { meters: true, hour12: false };
+const NATIVE_REPORTS: UsageReportLike[] = [
+  ...codex(limit({ windowId: "7d", durationMs: 7 * DAY, remainingFraction: 0.51 })),
+  {
+    provider: "anthropic",
+    limits: [
+      limit({
+        windowId: "5h",
+        durationMs: 5 * HR,
+        remainingFraction: 0.1,
+        resetsAt: NOW + 30 * MIN,
+      }),
+      limit({ windowId: "7d", durationMs: 7 * DAY, remainingFraction: 0.7 }),
+    ],
+  },
+];
+
+function textNode(...spans: UsageSpan[]): UsageNode {
+  return { k: "text", p: { spans, wrap: "none" } };
+}
+
+function inlineBar(value: number, tone: UsageTone): UsageNode {
+  return {
+    k: "meter",
+    p: { value, style: "bar", size: "sm", tone, min: { w: "8ch" }, max: { w: "8ch" } },
+  };
+}
+
+describe("describeUsageStatus row", () => {
   test("hides when nothing is reported", () => {
-    expect(describeUsageStatus([], NOW, " · ")).toEqual({ k: "col", p: { hidden: true } });
+    expect(describeUsageStatus([], NOW, " · ", METERS)).toEqual({ k: "col", p: { hidden: true } });
   });
 
-  test("describes one styled text node per entry, sorted, with dimmed window dots", () => {
-    const reports: UsageReportLike[] = [
-      ...codex(limit({ windowId: "7d", durationMs: 7 * DAY, remainingFraction: 0.51 })),
-      {
-        provider: "anthropic",
-        limits: [
-          limit({
-            windowId: "5h",
-            durationMs: 5 * HR,
-            remainingFraction: 0.1,
-            resetsAt: NOW + 30 * MIN,
-          }),
-          limit({ windowId: "7d", durationMs: 7 * DAY, remainingFraction: 0.7 }),
-        ],
-      },
-    ];
-    expect(describeUsageStatus(reports, NOW, " · ")).toEqual({
+  test("gives each window a fixed-width bar toned like its percent, entries sorted", () => {
+    expect(describeUsageStatus(NATIVE_REPORTS, NOW, " · ", METERS)).toEqual({
       k: "row",
-      p: { gap: "lg", wrap: true },
+      p: { gap: "lg", wrap: true, hovercard: expect.anything() },
       c: [
         {
-          k: "text",
+          k: "row",
           key: "Claude",
-          p: {
-            wrap: "none",
-            spans: [
-              { t: "Claude", s: "accent" },
-              { t: " " },
-              { t: "5h " },
-              { t: "10%", s: "error" },
-              { t: " " },
-              { t: "(30m)", s: "dim" },
-              { t: " · ", s: "dim" },
-              { t: "7d " },
-              { t: "70%", s: "success" },
-            ],
-          },
+          p: { gap: "sm", align: "center" },
+          c: [
+            textNode({ t: "Claude", s: "accent" }),
+            textNode({ t: "5h" }),
+            inlineBar(0.1, "error"),
+            textNode({ t: "10%", s: "error" }, { t: " " }, { t: "(30m)", s: "dim" }),
+            textNode({ t: "·", s: "dim" }),
+            textNode({ t: "7d" }),
+            inlineBar(0.7, "success"),
+            textNode({ t: "70%", s: "success" }),
+          ],
         },
         {
-          k: "text",
+          k: "row",
           key: "Codex",
-          p: {
-            wrap: "none",
-            spans: [
-              { t: "Codex", s: "accent" },
-              { t: " " },
-              { t: "7d " },
-              { t: "51%", s: "success" },
-            ],
-          },
+          p: { gap: "sm", align: "center" },
+          c: [
+            textNode({ t: "Codex", s: "accent" }),
+            textNode({ t: "7d" }),
+            inlineBar(0.51, "success"),
+            textNode({ t: "51%", s: "success" }),
+          ],
         },
       ],
+    });
+  });
+
+  test("keeps windows as text where the terminal draws no meters", () => {
+    const reports = codex(limit({ windowId: "5h", remainingFraction: 0.4 }));
+    expect(describeUsageStatus(reports, NOW, " · ", { meters: false })).toMatchObject({
+      c: [
+        {
+          c: [
+            textNode({ t: "Codex", s: "accent" }),
+            textNode({ t: "5h " }, { t: "40%", s: "warning" }),
+          ],
+        },
+      ],
+    });
+  });
+});
+
+describe("describeUsageStatus hover card", () => {
+  test("names each window with its share left, bar and reset time", () => {
+    const clock = new Date(NOW + 30 * MIN).toLocaleString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const claude = {
+      key: "Claude",
+      c: [
+        textNode({ t: "Claude", s: "accent" }),
+        {
+          key: "5h",
+          c: [
+            {
+              k: "row",
+              c: [
+                textNode({ t: "5-hour window" }),
+                textNode({ t: "10%", s: "error" }, { t: " left", s: "dim" }),
+              ],
+            },
+            { k: "meter", p: { value: 0.1, tone: "error", grow: 1 } },
+            textNode({ t: `resets in 30m · ${clock}`, s: "dim" }),
+          ],
+        },
+        {
+          key: "7d",
+          c: [
+            { k: "row", c: [textNode({ t: "Weekly window" }), expect.anything()] },
+            expect.anything(),
+          ],
+        },
+      ],
+    };
+    expect(describeUsageStatus(NATIVE_REPORTS, NOW, " · ", METERS)).toMatchObject({
+      p: {
+        hovercard: {
+          k: "col",
+          c: [textNode({ t: "Usage", s: "strong" }), claude, expect.anything()],
+        },
+      },
     });
   });
 });
@@ -468,7 +538,10 @@ type Handler = (event: unknown, ctx: unknown) => void;
 type WidgetFactory = (
   tui: unknown,
   theme: unknown,
-) => { render: (width: number) => readonly string[]; describe: () => unknown };
+) => {
+  render: (width: number) => readonly string[];
+  describe: (cx: { supports: () => boolean }) => unknown;
+};
 
 function fakePi(handlers: Record<string, Handler>): ExtensionAPI {
   return {
@@ -556,9 +629,9 @@ describe("usageStatus wiring", () => {
       // Hides when nothing fits.
       expect(component.render(5)).toEqual([]);
       // Natively, an unchanged description keeps its node identity so Tern skips it.
-      const described = component.describe();
+      const described = component.describe({ supports: () => true });
       expect(described).toMatchObject({ k: "row", c: [{ key: "Claude" }] });
-      expect(component.describe()).toBe(described);
+      expect(component.describe({ supports: () => true })).toBe(described);
     } finally {
       handlers["session_shutdown"]?.({}, ctx);
     }
