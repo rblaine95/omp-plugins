@@ -3,6 +3,7 @@ import { describe, expect, jest, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
 import usageStatus, {
+  describeUsageStatus,
   formatReset,
   formatUsageStatus,
   providerLabel,
@@ -229,6 +230,67 @@ describe("formatUsageStatus styling", () => {
   });
 });
 
+describe("describeUsageStatus", () => {
+  test("hides when nothing is reported", () => {
+    expect(describeUsageStatus([], NOW, " · ")).toEqual({ k: "col", p: { hidden: true } });
+  });
+
+  test("describes one styled text node per entry, sorted, with dimmed window dots", () => {
+    const reports: UsageReportLike[] = [
+      ...codex(limit({ windowId: "7d", durationMs: 7 * DAY, remainingFraction: 0.51 })),
+      {
+        provider: "anthropic",
+        limits: [
+          limit({
+            windowId: "5h",
+            durationMs: 5 * HR,
+            remainingFraction: 0.1,
+            resetsAt: NOW + 30 * MIN,
+          }),
+          limit({ windowId: "7d", durationMs: 7 * DAY, remainingFraction: 0.7 }),
+        ],
+      },
+    ];
+    expect(describeUsageStatus(reports, NOW, " · ")).toEqual({
+      k: "row",
+      p: { gap: "lg", wrap: true },
+      c: [
+        {
+          k: "text",
+          key: "Claude",
+          p: {
+            wrap: "none",
+            spans: [
+              { t: "Claude", s: "accent" },
+              { t: " " },
+              { t: "5h " },
+              { t: "10%", s: "error" },
+              { t: " " },
+              { t: "(30m)", s: "dim" },
+              { t: " · ", s: "dim" },
+              { t: "7d " },
+              { t: "70%", s: "success" },
+            ],
+          },
+        },
+        {
+          k: "text",
+          key: "Codex",
+          p: {
+            wrap: "none",
+            spans: [
+              { t: "Codex", s: "accent" },
+              { t: " " },
+              { t: "7d " },
+              { t: "51%", s: "success" },
+            ],
+          },
+        },
+      ],
+    });
+  });
+});
+
 describe("formatUsageStatus window selection", () => {
   test("renders a tiered duplicate as its own meter", () => {
     // Real `anthropic` shape: overall 5h + 7d, plus an Opus-only ("fable") 7d.
@@ -406,7 +468,7 @@ type Handler = (event: unknown, ctx: unknown) => void;
 type WidgetFactory = (
   tui: unknown,
   theme: unknown,
-) => { render: (width: number) => readonly string[] };
+) => { render: (width: number) => readonly string[]; describe: () => unknown };
 
 function fakePi(handlers: Record<string, Handler>): ExtensionAPI {
   return {
@@ -493,6 +555,10 @@ describe("usageStatus wiring", () => {
       expect(component.render(13)).toEqual(["Claude 5h 62%"]);
       // Hides when nothing fits.
       expect(component.render(5)).toEqual([]);
+      // Natively, an unchanged description keeps its node identity so Tern skips it.
+      const described = component.describe();
+      expect(described).toMatchObject({ k: "row", c: [{ key: "Claude" }] });
+      expect(component.describe()).toBe(described);
     } finally {
       handlers["session_shutdown"]?.({}, ctx);
     }

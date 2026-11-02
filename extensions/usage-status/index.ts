@@ -24,6 +24,11 @@
  * `NETWORK_TTL_MS`; a per-minute timer requests a redraw so the countdown ticks
  * locally from the cached absolute reset timestamps without refetching. The
  * widget is cleared on session shutdown and stays idle where `ctx.hasUI` is false.
+ *
+ * In Tern, omp describes components through the Tern Surface Protocol instead of
+ * drawing rows. Without a `describe` method the row would fall back to a fixed-
+ * width `rows` block in the terminal's own glyphs, so `UsageRow.describe` hands
+ * Tern native styled text that it lays out and wraps itself.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
@@ -218,16 +223,47 @@ function accountLabel(report: UsageReportLike): string {
   return projectId || "acct";
 }
 
-/** Render one window as "<token> <pct>%[ (<reset>)]", with color on the values. */
-function formatWindow(limit: UsageLimitLike, now: number, style: RowStyle): string {
+/** One styled run of text: `s` is a theme color token (`accent`, `success`,
+ *  `dim`, …), absent for plain text. The same shape as a Tern Surface Protocol
+ *  span, so a run feeds both the ANSI row and the native description. */
+export interface UsageSpan {
+  t: string;
+  s?: string;
+}
+
+/** One labeled entry on the row: a provider (account, tier) and its windows. */
+interface UsageEntry {
+  label: string;
+  windows: UsageLimitLike[];
+}
+
+/** One window as "<token> <pct>%[ (<reset>)]", with color on the values. */
+function windowSpans(limit: UsageLimitLike, now: number, showReset: boolean): UsageSpan[] {
   const remaining = remainingPercent(limit) ?? 0;
-  const pct = style.fg(usageColor(remaining), `${remaining}%`);
+  const spans: UsageSpan[] = [
+    { t: `${windowToken(limit)} ` },
+    { t: `${remaining}%`, s: usageColor(remaining) },
+  ];
   const resetsAt = limit.window?.resetsAt;
-  const reset =
-    style.showReset && typeof resetsAt === "number" && resetsAt > now
-      ? ` ${style.fg("dim", `(${formatReset(resetsAt - now)})`)}`
-      : "";
-  return `${windowToken(limit)} ${pct}${reset}`;
+  if (showReset && typeof resetsAt === "number" && resetsAt > now) {
+    spans.push({ t: " " }, { t: `(${formatReset(resetsAt - now)})`, s: "dim" });
+  }
+  return spans;
+}
+
+/** One entry as its accent label followed by its windows joined by `dot`. */
+function entrySpans(
+  entry: UsageEntry,
+  now: number,
+  showReset: boolean,
+  dot: UsageSpan,
+): UsageSpan[] {
+  const spans: UsageSpan[] = [{ t: entry.label, s: "accent" }, { t: " " }];
+  for (const [index, window] of entry.windows.entries()) {
+    if (index > 0) spans.push(dot);
+    spans.push(...windowSpans(window, now, showReset));
+  }
+  return spans;
 }
 
 /** Absent, or a string. */
@@ -272,12 +308,8 @@ function sanitizeUsageReports(value: unknown): UsageReportLike[] {
   return reports;
 }
 
-/** Build the usage row from every reported subscription, or undefined when empty. */
-export function formatUsageStatus(
-  reports: readonly UsageReportLike[],
-  now: number,
-  style: RowStyle = PLAIN_STYLE,
-): string | undefined {
+/** Every reported subscription as labeled entries, sorted by label. */
+function usageEntries(reports: readonly UsageReportLike[]): UsageEntry[] {
   const valid = reports.filter(
     (r): r is UsageReportLike => !!r && typeof r.provider === "string" && Array.isArray(r.limits),
   );
@@ -300,15 +332,60 @@ export function formatUsageStatus(
       windows: meter.windows,
     }));
   });
-  entries.sort((a, b) => a.label.localeCompare(b.label));
+  return entries.toSorted((a, b) => a.label.localeCompare(b.label));
+}
 
-  const parts = entries.map(
-    (entry) =>
-      `${style.fg("accent", entry.label)} ${entry.windows
-        .map((window) => formatWindow(window, now, style))
-        .join(style.dot)}`,
-  );
-  return parts.length > 0 ? parts.join(style.pipe) : undefined;
+/** Build the usage row from every reported subscription, or undefined when empty. */
+export function formatUsageStatus(
+  reports: readonly UsageReportLike[],
+  now: number,
+  style: RowStyle = PLAIN_STYLE,
+): string | undefined {
+  const entries = usageEntries(reports);
+  if (entries.length === 0) return undefined;
+  return entries
+    .map((entry) =>
+      entrySpans(entry, now, style.showReset, { t: style.dot })
+        .map((span) => (span.s ? style.fg(span.s, span.t) : span.t))
+        .join(""),
+    )
+    .join(style.pipe);
+}
+
+/** One entry as a native text node; `key` keeps its identity when entries come and go. */
+interface UsageTextNode {
+  k: "text";
+  key: string;
+  p: { spans: UsageSpan[]; wrap: "none" };
+}
+
+/** The structural subset of pi-tui's `NativeNode` (Tern Surface Protocol) this
+ *  widget describes: a wrapping row of entries, or a hidden placeholder. */
+export type UsageNode =
+  | { k: "row"; p: { gap: "lg"; wrap: true }; c: UsageTextNode[] }
+  | { k: "col"; p: { hidden: true } };
+
+const HIDDEN_NODE: UsageNode = { k: "col", p: { hidden: true } };
+
+/** Native description for Tern: one unwrapped text node per entry in a row the
+ *  terminal wraps, so a narrow pane moves whole entries to the next line and the
+ *  terminal's gap replaces the pipe separator. Windows keep the dimmed `dot`. */
+export function describeUsageStatus(
+  reports: readonly UsageReportLike[],
+  now: number,
+  dot: string,
+): UsageNode {
+  const entries = usageEntries(reports);
+  if (entries.length === 0) return HIDDEN_NODE;
+  return {
+    k: "row",
+    p: { gap: "lg", wrap: true },
+    c: entries.map((entry) => ({
+      k: "text",
+      key: entry.label,
+      p: { spans: entrySpans(entry, now, true, { t: dot, s: "dim" }), wrap: "none" },
+    })),
+  };
 }
 
 interface ThemeLike {
@@ -319,12 +396,14 @@ interface ThemeLike {
 const EMPTY_ROWS: readonly string[] = [];
 
 /** One-line widget component rendered above the editor. Reads `reports` live so
- *  a redraw recomputes the countdown from the cached absolute reset times. */
+ *  a redraw recomputes the countdown from the cached absolute reset times. In a
+ *  Tern Surface Protocol terminal omp calls `describe` instead of `render`. */
 class UsageRow {
   reports: readonly UsageReportLike[] = [];
   readonly #fg: (color: string, text: string) => string;
   readonly #dot: string;
   readonly #pipe: string;
+  #native: { signature: string; node: UsageNode } | undefined;
 
   constructor(theme: ThemeLike) {
     this.#fg = (color, text) => theme.fg(color, text);
@@ -348,6 +427,15 @@ class UsageRow {
       }
     }
     return EMPTY_ROWS;
+  }
+
+  /** Native node; the same object is returned while the description is
+   *  unchanged, which is how the reconciler skips an unchanged component. */
+  describe(): UsageNode {
+    const node = describeUsageStatus(this.reports, Date.now(), this.#dot);
+    const signature = JSON.stringify(node);
+    if (this.#native?.signature !== signature) this.#native = { signature, node };
+    return this.#native.node;
   }
 }
 
