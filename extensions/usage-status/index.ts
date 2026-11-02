@@ -24,6 +24,12 @@
  * `NETWORK_TTL_MS`; a per-minute timer requests a redraw so the countdown ticks
  * locally from the cached absolute reset timestamps without refetching. The
  * widget is cleared on session shutdown and stays idle where `ctx.hasUI` is false.
+ *
+ * In Tern, omp describes components through the Tern Surface Protocol instead of
+ * drawing rows. Without a `describe` method the row would fall back to a fixed-
+ * width `rows` block in the terminal's own glyphs, so `UsageRow.describe` hands
+ * Tern native nodes it lays out and wraps itself: each window gets a `meter` bar,
+ * and hovering the row opens a card with every window's share left and reset time.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
@@ -148,8 +154,11 @@ export function remainingPercent(limit: UsageLimitLike): number | undefined {
   return Math.round(Math.min(1, Math.max(0, fraction)) * 100);
 }
 
+/** Theme color, and meter tone, for a remaining share. */
+export type UsageTone = "success" | "warning" | "error";
+
 /** Theme color for a remaining-percent value: green plenty, yellow low, red critical. */
-export function usageColor(remaining: number): string {
+export function usageColor(remaining: number): UsageTone {
   if (remaining <= 20) return "error";
   if (remaining <= 50) return "warning";
   return "success";
@@ -218,16 +227,50 @@ function accountLabel(report: UsageReportLike): string {
   return projectId || "acct";
 }
 
-/** Render one window as "<token> <pct>%[ (<reset>)]", with color on the values. */
-function formatWindow(limit: UsageLimitLike, now: number, style: RowStyle): string {
+/** One styled run of text: `s` is a theme color token (`accent`, `success`,
+ *  `dim`, …), absent for plain text. The same shape as a Tern Surface Protocol
+ *  span, so a run feeds both the ANSI row and the native description. */
+export interface UsageSpan {
+  t: string;
+  s?: string;
+}
+
+/** One labeled entry on the row: a provider (account, tier) and its windows.
+ *  `base` is the provider (and account) label, `tier` the meter's label or "". */
+interface UsageEntry {
+  label: string;
+  base: string;
+  tier: string;
+  windows: UsageLimitLike[];
+}
+
+/** One window as "<token> <pct>%[ (<reset>)]", with color on the values. */
+function windowSpans(limit: UsageLimitLike, now: number, showReset: boolean): UsageSpan[] {
   const remaining = remainingPercent(limit) ?? 0;
-  const pct = style.fg(usageColor(remaining), `${remaining}%`);
+  const spans: UsageSpan[] = [
+    { t: `${windowToken(limit)} ` },
+    { t: `${remaining}%`, s: usageColor(remaining) },
+  ];
   const resetsAt = limit.window?.resetsAt;
-  const reset =
-    style.showReset && typeof resetsAt === "number" && resetsAt > now
-      ? ` ${style.fg("dim", `(${formatReset(resetsAt - now)})`)}`
-      : "";
-  return `${windowToken(limit)} ${pct}${reset}`;
+  if (showReset && typeof resetsAt === "number" && resetsAt > now) {
+    spans.push({ t: " " }, { t: `(${formatReset(resetsAt - now)})`, s: "dim" });
+  }
+  return spans;
+}
+
+/** One entry as its accent label followed by its windows joined by `dot`. */
+function entrySpans(
+  entry: UsageEntry,
+  now: number,
+  showReset: boolean,
+  dot: UsageSpan,
+): UsageSpan[] {
+  const spans: UsageSpan[] = [{ t: entry.label, s: "accent" }, { t: " " }];
+  for (const [index, window] of entry.windows.entries()) {
+    if (index > 0) spans.push(dot);
+    spans.push(...windowSpans(window, now, showReset));
+  }
+  return spans;
 }
 
 /** Absent, or a string. */
@@ -272,12 +315,8 @@ function sanitizeUsageReports(value: unknown): UsageReportLike[] {
   return reports;
 }
 
-/** Build the usage row from every reported subscription, or undefined when empty. */
-export function formatUsageStatus(
-  reports: readonly UsageReportLike[],
-  now: number,
-  style: RowStyle = PLAIN_STYLE,
-): string | undefined {
+/** Every reported subscription as labeled entries, sorted by label. */
+function usageEntries(reports: readonly UsageReportLike[]): UsageEntry[] {
   const valid = reports.filter(
     (r): r is UsageReportLike => !!r && typeof r.provider === "string" && Array.isArray(r.limits),
   );
@@ -295,20 +334,299 @@ export function formatUsageStatus(
     // Disambiguate with an account label only when a provider has >1 rendered account.
     const base =
       (counts.get(report.provider) ?? 0) > 1 ? `${brand}:${accountLabel(report)}` : brand;
-    return meters.map((meter) => ({
-      label: meter.tier ? `${base} ${providerLabel(meter.tier)}` : base,
-      windows: meter.windows,
-    }));
+    return meters.map((meter) => {
+      const tier = meter.tier ? providerLabel(meter.tier) : "";
+      return { label: tier ? `${base} ${tier}` : base, base, tier, windows: meter.windows };
+    });
   });
-  entries.sort((a, b) => a.label.localeCompare(b.label));
+  return entries.toSorted((a, b) => a.label.localeCompare(b.label));
+}
 
-  const parts = entries.map(
-    (entry) =>
-      `${style.fg("accent", entry.label)} ${entry.windows
-        .map((window) => formatWindow(window, now, style))
-        .join(style.dot)}`,
-  );
-  return parts.length > 0 ? parts.join(style.pipe) : undefined;
+/** Build the usage row from every reported subscription, or undefined when empty. */
+export function formatUsageStatus(
+  reports: readonly UsageReportLike[],
+  now: number,
+  style: RowStyle = PLAIN_STYLE,
+): string | undefined {
+  const entries = usageEntries(reports);
+  if (entries.length === 0) return undefined;
+  return entries
+    .map((entry) =>
+      entrySpans(entry, now, style.showReset, { t: style.dot })
+        .map((span) => (span.s ? style.fg(span.s, span.t) : span.t))
+        .join(""),
+    )
+    .join(style.pipe);
+}
+
+type CharExtent = `${number}ch`;
+
+/** The structural subset of pi-tui's `NativeNode` (Tern Surface Protocol) this
+ *  widget describes. The hover card is the same shape, as a `TspPropNode`. */
+export type UsageNode =
+  | {
+      k: "row";
+      key?: string;
+      p: {
+        gap: "xs" | "sm" | "lg";
+        wrap?: true;
+        align?: "center";
+        justify?: "between";
+        hovercard?: UsageNode;
+      };
+      c: UsageNode[];
+    }
+  | { k: "col"; key?: string; p: { gap?: "xs" | "sm" | "md"; hidden?: true }; c?: UsageNode[] }
+  | { k: "text"; key?: string; p: { spans: UsageSpan[]; wrap: "none" } }
+  | {
+      k: "meter";
+      key?: string;
+      p: {
+        value: number;
+        style: "bar";
+        size: "sm";
+        tone: UsageTone;
+        grow?: number;
+        min?: { w: CharExtent };
+        max?: { w: CharExtent };
+      };
+    };
+
+/** What the description needs from omp's `DescribeContext`. */
+export interface UsageDescribeOptions {
+  /** The terminal draws `meter` nodes; without them the row stays text only. */
+  meters: boolean;
+  /** The user's clock reads 12-hour; undefined leaves it to the locale. */
+  hour12?: boolean | undefined;
+  /** Pane width in cells: the row compacts until its estimate fits. */
+  cols: number;
+}
+
+const HIDDEN_NODE: UsageNode = { k: "col", p: { hidden: true } };
+/** Width of an inline window bar, in cells. */
+const INLINE_METER_CELLS = 8;
+const INLINE_METER: CharExtent = `${INLINE_METER_CELLS}ch`;
+/** Estimated cells for the gaps between pieces of a provider and between providers. */
+const PIECE_GAP_CELLS = 1;
+const GROUP_GAP_CELLS = 3;
+const CARD_WINDOW_NAMES: Record<string, string> = {
+  "1d": "Daily",
+  "7d": "Weekly",
+  "30d": "Monthly",
+};
+
+function textNode(spans: UsageSpan[]): UsageNode {
+  return { k: "text", p: { spans, wrap: "none" } };
+}
+
+/** Remaining share as a bar, toned like its percent. */
+function meterNode(remaining: number, inline: boolean): UsageNode {
+  const base = {
+    value: remaining / 100,
+    style: "bar",
+    size: "sm",
+    tone: usageColor(remaining),
+  } as const;
+  return {
+    k: "meter",
+    p: inline
+      ? { ...base, min: { w: INLINE_METER }, max: { w: INLINE_METER } }
+      : { ...base, grow: 1 },
+  };
+}
+
+/** A window's name in the card: "5-hour window", "Weekly window". */
+function windowName(limit: UsageLimitLike): string {
+  const token = windowToken(limit);
+  const hours = /^(\d+)h$/u.exec(token)?.[1];
+  return `${CARD_WINDOW_NAMES[token] ?? (hours ? `${hours}-hour` : token)} window`;
+}
+
+/** Local clock time of a reset: the time today, else weekday and time within a
+ *  week, else the date as well. */
+function resetClock(resetsAt: number, now: number, hour12: boolean | undefined): string {
+  const at = new Date(resetsAt);
+  const sameDay = at.toDateString() === new Date(now).toDateString();
+  const withinWeek = resetsAt - now < 6 * 24 * 60 * 60_000;
+  return at.toLocaleString(undefined, {
+    ...(sameDay ? {} : { weekday: "short" }),
+    ...(withinWeek ? {} : { month: "short", day: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+    ...(hour12 === undefined ? {} : { hour12 }),
+  });
+}
+
+/** A window on the row with the meter it belongs to ("" for the base meter). */
+interface RowWindow {
+  tier: string;
+  limit: UsageLimitLike;
+}
+
+/** One provider (account) on the row, its tiered meters folded in. */
+interface RowGroup {
+  label: string;
+  windows: RowWindow[];
+}
+
+/** How much each window shows: `full` with countdowns, `brief` without, and
+ *  `lowest` only the window with the least left per provider. */
+type RowLevel = "full" | "brief" | "lowest";
+const ROW_LEVELS: readonly RowLevel[] = ["full", "brief", "lowest"];
+
+/** Fold each provider's tiered entries (Claude Fable) into its base entry. */
+function rowGroups(entries: readonly UsageEntry[]): RowGroup[] {
+  const groups = new Map<string, RowWindow[]>();
+  for (const entry of entries) {
+    const windows = groups.get(entry.base) ?? [];
+    windows.push(...entry.windows.map((limit) => ({ tier: entry.tier, limit })));
+    groups.set(entry.base, windows);
+  }
+  return [...groups].map(([label, windows]) => ({ label, windows }));
+}
+
+/** The window with the least left; the first (base, shortest) wins a tie. */
+function lowestWindow(windows: readonly RowWindow[]): RowWindow[] {
+  const percent = (window: RowWindow) => remainingPercent(window.limit) ?? 0;
+  return [windows.reduce((low, window) => (percent(window) < percent(low) ? window : low))];
+}
+
+/** One window inline: token (tier-prefixed), bar, percent and countdown. */
+function inlineWindow(
+  window: RowWindow,
+  now: number,
+  meters: boolean,
+  showReset: boolean,
+): UsageNode[] {
+  const remaining = remainingPercent(window.limit) ?? 0;
+  const [token, ...rest] = windowSpans(window.limit, now, showReset);
+  const label = `${window.tier ? `${window.tier} ` : ""}${token?.t ?? ""}`;
+  if (!meters) return [textNode([{ t: label }, ...rest])];
+  return [textNode([{ t: label.trimEnd() }]), meterNode(remaining, true), textNode(rest)];
+}
+
+/** One provider's pieces: accent label, then its windows split by a dimmed `dot`. */
+function inlineGroup(
+  group: RowGroup,
+  level: RowLevel,
+  now: number,
+  dot: string,
+  meters: boolean,
+): UsageNode[] {
+  const pieces: UsageNode[] = [textNode([{ t: group.label, s: "accent" }])];
+  const windows = level === "lowest" ? lowestWindow(group.windows) : group.windows;
+  for (const [index, window] of windows.entries()) {
+    if (index > 0) pieces.push(textNode([{ t: dot.trim(), s: "dim" }]));
+    pieces.push(...inlineWindow(window, now, meters, level === "full"));
+  }
+  return pieces;
+}
+
+/** Estimated cells of one provider's pieces. Tern draws the row in a
+ *  proportional font, so counting characters as cells errs on the wide side. */
+function piecesCells(pieces: readonly UsageNode[]): number {
+  let cells = (pieces.length - 1) * PIECE_GAP_CELLS;
+  for (const piece of pieces) {
+    cells +=
+      piece.k === "text"
+        ? piece.p.spans.reduce((sum, span) => sum + [...span.t].length, 0)
+        : INLINE_METER_CELLS;
+  }
+  return cells;
+}
+
+/** The row's providers at the fullest level whose estimate fits `cols`, else
+ *  at the most compact level (the row then wraps). */
+function fittedGroups(
+  groups: readonly RowGroup[],
+  now: number,
+  dot: string,
+  options: UsageDescribeOptions,
+): UsageNode[] {
+  let fitted: UsageNode[] = [];
+  for (const level of ROW_LEVELS) {
+    const pieces = groups.map((group) => inlineGroup(group, level, now, dot, options.meters));
+    fitted = pieces.map((c, index) => ({
+      k: "row",
+      key: groups[index]?.label ?? "",
+      // Wraps only when one provider alone is wider than the pane (lowest level).
+      p: { gap: "sm", align: "center", wrap: true },
+      c,
+    }));
+    const cells =
+      pieces.reduce((sum, group) => sum + piecesCells(group), 0) +
+      (groups.length - 1) * GROUP_GAP_CELLS;
+    if (cells <= options.cols) break;
+  }
+  return fitted;
+}
+
+/** One window in the card: name and share left, a full-width bar, the reset. */
+function cardWindow(limit: UsageLimitLike, now: number, options: UsageDescribeOptions): UsageNode {
+  const remaining = remainingPercent(limit) ?? 0;
+  const children: UsageNode[] = [
+    {
+      k: "row",
+      p: { gap: "sm", justify: "between" },
+      c: [
+        textNode([{ t: windowName(limit) }]),
+        textNode([
+          { t: `${remaining}%`, s: usageColor(remaining) },
+          { t: " left", s: "dim" },
+        ]),
+      ],
+    },
+  ];
+  if (options.meters) children.push(meterNode(remaining, false));
+  const resetsAt = limit.window?.resetsAt;
+  if (typeof resetsAt === "number" && resetsAt > now) {
+    const clock = resetClock(resetsAt, now, options.hour12);
+    children.push(
+      textNode([{ t: `resets in ${formatReset(resetsAt - now)} · ${clock}`, s: "dim" }]),
+    );
+  }
+  return { k: "col", key: windowToken(limit), p: { gap: "xs" }, c: children };
+}
+
+/** The hover card: every entry with each window's bar, share left and reset time. */
+function usageCard(entries: UsageEntry[], now: number, options: UsageDescribeOptions): UsageNode {
+  return {
+    k: "col",
+    p: { gap: "md" },
+    c: [
+      textNode([{ t: "Usage", s: "strong" }]),
+      ...entries.map((entry): UsageNode => ({
+        k: "col",
+        key: entry.label,
+        p: { gap: "sm" },
+        c: [
+          textNode([{ t: entry.label, s: "accent" }]),
+          ...entry.windows.map((window) => cardWindow(window, now, options)),
+        ],
+      })),
+    ],
+  };
+}
+
+/** Native description for Tern: a wrapping row with one keyed entry per
+ *  provider (tiered meters folded in), so a narrow pane moves whole providers to
+ *  the next line and the terminal's gap replaces the pipe separator. Each window
+ *  gets a bar where the terminal draws meters. When the row would not fit on
+ *  one line it drops the countdowns, then shows only each provider's lowest
+ *  window; hovering it opens a card with every window's details. */
+export function describeUsageStatus(
+  reports: readonly UsageReportLike[],
+  now: number,
+  dot: string,
+  options: UsageDescribeOptions,
+): UsageNode {
+  const entries = usageEntries(reports);
+  if (entries.length === 0) return HIDDEN_NODE;
+  return {
+    k: "row",
+    p: { gap: "lg", wrap: true, hovercard: usageCard(entries, now, options) },
+    c: fittedGroups(rowGroups(entries), now, dot, options),
+  };
 }
 
 interface ThemeLike {
@@ -319,12 +637,14 @@ interface ThemeLike {
 const EMPTY_ROWS: readonly string[] = [];
 
 /** One-line widget component rendered above the editor. Reads `reports` live so
- *  a redraw recomputes the countdown from the cached absolute reset times. */
+ *  a redraw recomputes the countdown from the cached absolute reset times. In a
+ *  Tern Surface Protocol terminal omp calls `describe` instead of `render`. */
 class UsageRow {
   reports: readonly UsageReportLike[] = [];
   readonly #fg: (color: string, text: string) => string;
   readonly #dot: string;
   readonly #pipe: string;
+  #native: { signature: string; node: UsageNode } | undefined;
 
   constructor(theme: ThemeLike) {
     this.#fg = (color, text) => theme.fg(color, text);
@@ -348,6 +668,19 @@ class UsageRow {
       }
     }
     return EMPTY_ROWS;
+  }
+
+  /** Native node; the same object is returned while the description is
+   *  unchanged, which is how the reconciler skips an unchanged component. */
+  describe(cx: { cols: number; supports(kind: "meter"): boolean; hour12?: boolean }): UsageNode {
+    const node = describeUsageStatus(this.reports, Date.now(), this.#dot, {
+      meters: cx.supports("meter"),
+      hour12: cx.hour12,
+      cols: cx.cols,
+    });
+    const signature = JSON.stringify(node);
+    if (this.#native?.signature !== signature) this.#native = { signature, node };
+    return this.#native.node;
   }
 }
 
