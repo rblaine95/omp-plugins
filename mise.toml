@@ -4,9 +4,9 @@ npm.package_manager = "bun"
 
 [tools]
 bun = "1"
-node = "24"
-hk = "2.4.0"
-pkl = "0.32"
+node = "26"
+hk = { version = "2.12.0", workflow = "release.yml" }
+pkl = "0.33"
 
 [hooks]
 enter = ["hk install --mise"]
