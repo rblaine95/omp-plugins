@@ -398,17 +398,11 @@ export interface UsageDescribeOptions {
   meters: boolean;
   /** The user's clock reads 12-hour; undefined leaves it to the locale. */
   hour12?: boolean | undefined;
-  /** Pane width in cells: the row compacts until its estimate fits. */
-  cols: number;
 }
 
 const HIDDEN_NODE: UsageNode = { k: "col", p: { hidden: true } };
-/** Width of an inline window bar, in cells. */
-const INLINE_METER_CELLS = 8;
-const INLINE_METER: CharExtent = `${INLINE_METER_CELLS}ch`;
-/** Estimated cells for the gaps between pieces of a provider and between providers. */
-const PIECE_GAP_CELLS = 1;
-const GROUP_GAP_CELLS = 3;
+/** Width of an inline window bar. */
+const INLINE_METER: CharExtent = "8ch";
 const CARD_WINDOW_NAMES: Record<string, string> = {
   "1d": "Daily",
   "7d": "Weekly",
@@ -469,11 +463,6 @@ interface RowGroup {
   windows: RowWindow[];
 }
 
-/** How much each window shows: `full` with countdowns, `brief` without, and
- *  `lowest` only the window with the least left per provider. */
-type RowLevel = "full" | "brief" | "lowest";
-const ROW_LEVELS: readonly RowLevel[] = ["full", "brief", "lowest"];
-
 /** Fold each provider's tiered entries (Claude Fable) into its base entry. */
 function rowGroups(entries: readonly UsageEntry[]): RowGroup[] {
   const groups = new Map<string, RowWindow[]>();
@@ -485,80 +474,25 @@ function rowGroups(entries: readonly UsageEntry[]): RowGroup[] {
   return [...groups].map(([label, windows]) => ({ label, windows }));
 }
 
-/** The window with the least left; the first (base, shortest) wins a tie. */
-function lowestWindow(windows: readonly RowWindow[]): RowWindow[] {
-  const percent = (window: RowWindow) => remainingPercent(window.limit) ?? 0;
-  return [windows.reduce((low, window) => (percent(window) < percent(low) ? window : low))];
-}
-
-/** One window inline: token (tier-prefixed), bar, percent and countdown. */
-function inlineWindow(
-  window: RowWindow,
-  now: number,
-  meters: boolean,
-  showReset: boolean,
-): UsageNode[] {
+/** One window inline: token (tier-prefixed), bar and percent. The row leaves
+ *  out reset countdowns; the hover card shows them. */
+function inlineWindow(window: RowWindow, now: number, meters: boolean): UsageNode[] {
   const remaining = remainingPercent(window.limit) ?? 0;
-  const [token, ...rest] = windowSpans(window.limit, now, showReset);
+  const [token, ...rest] = windowSpans(window.limit, now, false);
   const label = `${window.tier ? `${window.tier} ` : ""}${token?.t ?? ""}`;
   if (!meters) return [textNode([{ t: label }, ...rest])];
   return [textNode([{ t: label.trimEnd() }]), meterNode(remaining, true), textNode(rest)];
 }
 
-/** One provider's pieces: accent label, then its windows split by a dimmed `dot`. */
-function inlineGroup(
-  group: RowGroup,
-  level: RowLevel,
-  now: number,
-  dot: string,
-  meters: boolean,
-): UsageNode[] {
+/** One provider as a keyed, wrapping row: accent label, then its windows split
+ *  by a dimmed `dot`. */
+function inlineGroup(group: RowGroup, now: number, dot: string, meters: boolean): UsageNode {
   const pieces: UsageNode[] = [textNode([{ t: group.label, s: "accent" }])];
-  const windows = level === "lowest" ? lowestWindow(group.windows) : group.windows;
-  for (const [index, window] of windows.entries()) {
+  for (const [index, window] of group.windows.entries()) {
     if (index > 0) pieces.push(textNode([{ t: dot.trim(), s: "dim" }]));
-    pieces.push(...inlineWindow(window, now, meters, level === "full"));
+    pieces.push(...inlineWindow(window, now, meters));
   }
-  return pieces;
-}
-
-/** Estimated cells of one provider's pieces. Tern draws the row in a
- *  proportional font, so counting characters as cells errs on the wide side. */
-function piecesCells(pieces: readonly UsageNode[]): number {
-  let cells = (pieces.length - 1) * PIECE_GAP_CELLS;
-  for (const piece of pieces) {
-    cells +=
-      piece.k === "text"
-        ? piece.p.spans.reduce((sum, span) => sum + [...span.t].length, 0)
-        : INLINE_METER_CELLS;
-  }
-  return cells;
-}
-
-/** The row's providers at the fullest level whose estimate fits `cols`, else
- *  at the most compact level (the row then wraps). */
-function fittedGroups(
-  groups: readonly RowGroup[],
-  now: number,
-  dot: string,
-  options: UsageDescribeOptions,
-): UsageNode[] {
-  let fitted: UsageNode[] = [];
-  for (const level of ROW_LEVELS) {
-    const pieces = groups.map((group) => inlineGroup(group, level, now, dot, options.meters));
-    fitted = pieces.map((c, index) => ({
-      k: "row",
-      key: groups[index]?.label ?? "",
-      // Wraps only when one provider alone is wider than the pane (lowest level).
-      p: { gap: "sm", align: "center", wrap: true },
-      c,
-    }));
-    const cells =
-      pieces.reduce((sum, group) => sum + piecesCells(group), 0) +
-      (groups.length - 1) * GROUP_GAP_CELLS;
-    if (cells <= options.cols) break;
-  }
-  return fitted;
+  return { k: "row", key: group.label, p: { gap: "sm", align: "center", wrap: true }, c: pieces };
 }
 
 /** One window in the card: name and share left, a full-width bar, the reset. */
@@ -611,9 +545,9 @@ function usageCard(entries: UsageEntry[], now: number, options: UsageDescribeOpt
 /** Native description for Tern: a wrapping row with one keyed entry per
  *  provider (tiered meters folded in), so a narrow pane moves whole providers to
  *  the next line and the terminal's gap replaces the pipe separator. Each window
- *  gets a bar where the terminal draws meters. When the row would not fit on
- *  one line it drops the countdowns, then shows only each provider's lowest
- *  window; hovering it opens a card with every window's details. */
+ *  gets a bar where the terminal draws meters. The row leaves out reset
+ *  countdowns and lets Tern wrap it; hovering it opens a card with every
+ *  window's details. */
 export function describeUsageStatus(
   reports: readonly UsageReportLike[],
   now: number,
@@ -625,7 +559,7 @@ export function describeUsageStatus(
   return {
     k: "row",
     p: { gap: "lg", wrap: true, hovercard: usageCard(entries, now, options) },
-    c: fittedGroups(rowGroups(entries), now, dot, options),
+    c: rowGroups(entries).map((group) => inlineGroup(group, now, dot, options.meters)),
   };
 }
 
@@ -672,11 +606,10 @@ class UsageRow {
 
   /** Native node; the same object is returned while the description is
    *  unchanged, which is how the reconciler skips an unchanged component. */
-  describe(cx: { cols: number; supports(kind: "meter"): boolean; hour12?: boolean }): UsageNode {
+  describe(cx: { supports(kind: "meter"): boolean; hour12?: boolean }): UsageNode {
     const node = describeUsageStatus(this.reports, Date.now(), this.#dot, {
       meters: cx.supports("meter"),
       hour12: cx.hour12,
-      cols: cx.cols,
     });
     const signature = JSON.stringify(node);
     if (this.#native?.signature !== signature) this.#native = { signature, node };

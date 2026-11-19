@@ -233,7 +233,7 @@ describe("formatUsageStatus styling", () => {
   });
 });
 
-const METERS = { meters: true, hour12: false, cols: 200 };
+const METERS = { meters: true, hour12: false };
 const NATIVE_REPORTS: UsageReportLike[] = [
   ...codex(limit({ windowId: "7d", durationMs: 7 * DAY, remainingFraction: 0.51 })),
   {
@@ -266,7 +266,7 @@ describe("describeUsageStatus row", () => {
     expect(describeUsageStatus([], NOW, " · ", METERS)).toEqual({ k: "col", p: { hidden: true } });
   });
 
-  test("gives each window a fixed-width bar toned like its percent, entries sorted", () => {
+  test("gives each window a fixed-width bar toned like its percent, no countdowns, entries sorted", () => {
     expect(describeUsageStatus(NATIVE_REPORTS, NOW, " · ", METERS)).toEqual({
       k: "row",
       p: { gap: "lg", wrap: true, hovercard: expect.anything() },
@@ -279,7 +279,7 @@ describe("describeUsageStatus row", () => {
             textNode({ t: "Claude", s: "accent" }),
             textNode({ t: "5h" }),
             inlineBar(0.1, "error"),
-            textNode({ t: "10%", s: "error" }, { t: " " }, { t: "(30m)", s: "dim" }),
+            textNode({ t: "10%", s: "error" }),
             textNode({ t: "·", s: "dim" }),
             textNode({ t: "7d" }),
             inlineBar(0.7, "success"),
@@ -303,7 +303,7 @@ describe("describeUsageStatus row", () => {
 
   test("keeps windows as text where the terminal draws no meters", () => {
     const reports = codex(limit({ windowId: "5h", remainingFraction: 0.4 }));
-    expect(describeUsageStatus(reports, NOW, " · ", { meters: false, cols: 200 })).toMatchObject({
+    expect(describeUsageStatus(reports, NOW, " · ", { meters: false })).toMatchObject({
       c: [
         {
           c: [
@@ -316,58 +316,30 @@ describe("describeUsageStatus row", () => {
   });
 });
 
-describe("describeUsageStatus compaction", () => {
-  // Claude 5h 10% (30m) and 7d 70%, plus an Opus-only ("fable") 7d at 5%.
-  const claude: UsageReportLike[] = [
-    {
-      provider: "anthropic",
-      limits: [
-        limit({
-          windowId: "5h",
-          durationMs: 5 * HR,
-          remainingFraction: 0.1,
-          resetsAt: NOW + 30 * MIN,
-        }),
-        limit({ windowId: "7d", durationMs: 7 * DAY, remainingFraction: 0.7, resetsAt: NOW + DAY }),
-        limit({ windowId: "7d", durationMs: 7 * DAY, tier: "fable", remainingFraction: 0.05 }),
+describe("describeUsageStatus tiers", () => {
+  test("folds a tiered meter into its provider, labeled by tier", () => {
+    const claude: UsageReportLike[] = [
+      {
+        provider: "anthropic",
+        limits: [
+          limit({ windowId: "5h", durationMs: 5 * HR, remainingFraction: 0.1 }),
+          limit({ windowId: "7d", durationMs: 7 * DAY, tier: "fable", remainingFraction: 0.05 }),
+        ],
+      },
+    ];
+    expect(describeUsageStatus(claude, NOW, " · ", { meters: false })).toMatchObject({
+      c: [
+        {
+          key: "Claude",
+          c: [
+            textNode({ t: "Claude", s: "accent" }),
+            textNode({ t: "5h " }, { t: "10%", s: "error" }),
+            textNode({ t: "·", s: "dim" }),
+            textNode({ t: "Fable 7d " }, { t: "5%", s: "error" }),
+          ],
+        },
       ],
-    },
-  ];
-  const pieces = (cols: number) => describeUsageStatus(claude, NOW, " · ", { meters: false, cols });
-  const row = (...windows: UsageNode[]) => ({
-    c: [{ key: "Claude", c: [textNode({ t: "Claude", s: "accent" }), ...windows] }],
-  });
-  const dot = textNode({ t: "·", s: "dim" });
-
-  test("folds a tiered meter into its provider, labeled by tier, when it fits", () => {
-    expect(pieces(200)).toMatchObject(
-      row(
-        textNode({ t: "5h " }, { t: "10%", s: "error" }, { t: " " }, { t: "(30m)", s: "dim" }),
-        dot,
-        textNode({ t: "7d " }, { t: "70%", s: "success" }, { t: " " }, { t: "(1d)", s: "dim" }),
-        dot,
-        textNode({ t: "Fable 7d " }, { t: "5%", s: "error" }),
-      ),
-    );
-  });
-
-  test("drops the countdowns first when the row would not fit", () => {
-    expect(pieces(40)).toMatchObject(
-      row(
-        textNode({ t: "5h " }, { t: "10%", s: "error" }),
-        dot,
-        textNode({ t: "7d " }, { t: "70%", s: "success" }),
-        dot,
-        textNode({ t: "Fable 7d " }, { t: "5%", s: "error" }),
-      ),
-    );
-  });
-
-  test("then shows only the provider's lowest window, wrapping it when even that is too wide", () => {
-    const lowest = row(textNode({ t: "Fable 7d " }, { t: "5%", s: "error" }));
-    expect(pieces(25)).toMatchObject(lowest);
-    expect(pieces(5)).toMatchObject(lowest);
-    expect(pieces(5)).toMatchObject({ c: [{ p: { wrap: true } }] });
+    });
   });
 });
 
@@ -684,7 +656,7 @@ describe("usageStatus wiring", () => {
       // Hides when nothing fits.
       expect(component.render(5)).toEqual([]);
       // Natively, an unchanged description keeps its node identity so Tern skips it.
-      const cx = { cols: 200, supports: () => true };
+      const cx = { supports: () => true };
       const described = component.describe(cx);
       expect(described).toMatchObject({ k: "row", c: [{ key: "Claude" }] });
       expect(component.describe(cx)).toBe(described);
