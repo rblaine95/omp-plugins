@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/rblaine95/omp-plugins/compare/v1.3.0...v1.3.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **usage-status:** fit the Tern row inside Tern's 720px dock ([#48](https://github.com/rblaine95/omp-plugins/issues/48)) ([c15336a](https://github.com/rblaine95/omp-plugins/commit/c15336a49e996aba6b6bd8779a835095b6c33b79))
+
 ## [1.3.0](https://github.com/rblaine95/omp-plugins/compare/v1.2.0...v1.3.0) (2026-11-02)
 
 
