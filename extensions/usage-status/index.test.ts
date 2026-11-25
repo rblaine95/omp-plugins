@@ -584,7 +584,9 @@ async function flushMicrotasks(): Promise<void> {
 
 const FAKE_THEME = {
   fg: (_c: string, t: string) => t,
-  sep: { dot: " · ", pipe: "|" },
+  symbols: {
+    symbol: (key: string) => ({ "sep.dot": " · ", "sep.pipe": " │ " })[key] ?? "",
+  },
 };
 
 interface UiCtxOptions {
