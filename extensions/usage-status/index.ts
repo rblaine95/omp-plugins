@@ -563,9 +563,10 @@ export function describeUsageStatus(
   };
 }
 
+/** The subset of omp's `ExtensionTheme` the widget reads. */
 interface ThemeLike {
   fg(color: string, text: string): string;
-  sep: { dot: string; pipe: string };
+  symbols: { symbol(key: string): string };
 }
 
 const EMPTY_ROWS: readonly string[] = [];
@@ -582,8 +583,8 @@ class UsageRow {
 
   constructor(theme: ThemeLike) {
     this.#fg = (color, text) => theme.fg(color, text);
-    this.#dot = theme.sep.dot;
-    this.#pipe = `  ${theme.sep.pipe}  `;
+    this.#dot = theme.symbols.symbol("sep.dot");
+    this.#pipe = `  ${theme.symbols.symbol("sep.pipe").trim()}  `;
   }
 
   render(width: number): readonly string[] {
