@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/rblaine95/omp-plugins/compare/v1.3.1...v1.3.2) (2026-11-25)
+
+
+### Bug Fixes
+
+* **usage-status:** read separators from omp 19.2 theme ([#52](https://github.com/rblaine95/omp-plugins/issues/52)) ([d1b3d20](https://github.com/rblaine95/omp-plugins/commit/d1b3d20bd2262b7ba05fb100a12c902a0a912979))
+
 ## [1.3.1](https://github.com/rblaine95/omp-plugins/compare/v1.3.0...v1.3.1) (2026-11-19)
 
 
